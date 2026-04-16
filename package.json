@@ -1,0 +1,26 @@
+{
+  "name": "spec-runner",
+  "version": "0.1.0",
+  "description": "Spec-Driven Multi-Agent Prototype Runner",
+  "type": "module",
+  "main": "dist/cli.js",
+  "scripts": {
+    "build": "tsc --noEmit",
+    "typecheck": "tsc --noEmit",
+    "start": "node --experimental-specifier-resolution=node dist/cli.js"
+  },
+  "dependencies": {
+    "@anthropic-ai/sdk": "^0.39.0",
+    "dotenv": "^17.4.2",
+    "playwright": "^1.49.0",
+    "uuid": "^10.0.0"
+  },
+  "devDependencies": {
+    "@types/node": "^22.0.0",
+    "@types/uuid": "^10.0.0",
+    "typescript": "^5.5.0"
+  },
+  "engines": {
+    "node": ">=20"
+  }
+}

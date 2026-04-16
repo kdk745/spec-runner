@@ -1,0 +1,7 @@
+node_modules/
+dist/
+runs/*/
+!runs/.gitkeep
+*.env
+.env
+conversation-history.md

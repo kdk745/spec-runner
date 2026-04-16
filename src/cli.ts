@@ -1,0 +1,369 @@
+/**
+ * CLI entry point.
+ *
+ * Commands:
+ *   run  "<prompt>"   — create a new run, generate and lock the spec, print result
+ *   exec <runId>      — run the worker adapter against a locked spec
+ *   show <runId>      — print the run record, spec, and candidates for an existing run
+ *
+ * Environment:
+ *   ANTHROPIC_API_KEY  (required for `run`)
+ *   RUNS_DIR           (optional, default: ./runs)
+ */
+
+import "dotenv/config";
+import { readFile, writeFile } from "node:fs/promises";
+import { join, resolve } from "node:path";
+import { createFileEventLog } from "./events/index.js";
+import { createSpecBuilder } from "./orchestrator/spec-builder.js";
+import { createOrchestrator } from "./orchestrator/index.js";
+import { createFsCandidateManager } from "./candidate/index.js";
+import {
+  createWorkerRegistry,
+  createStubWorkerAdapter,
+  createClaudeWorkerAdapter,
+} from "./worker/adapter.js";
+import { createVerifier } from "./verifier/index.js";
+import { createRecorder } from "./recorder/index.js";
+import { createEvaluator } from "./evaluator/index.js";
+import { createDockerEnvironmentManager } from "./environment/docker-manager.js";
+import type { RunRecord, RunSpec, PipelineResult } from "./types/index.js";
+
+const RUNS_DIR = resolve(process.env["RUNS_DIR"] ?? "./runs");
+
+function usage(): void {
+  console.error(`
+Usage:
+  node dist/cli.js pipeline "<prompt>"   — full run: spec → worker → verify → record → evaluate
+  node dist/cli.js run      "<prompt>"   — lock a spec only (no execution)
+  node dist/cli.js exec     <runId>      — re-run pipeline against an existing locked spec
+  node dist/cli.js show     <runId>      — inspect run, spec, candidates, and result
+
+Environment:
+  ANTHROPIC_API_KEY   required for "pipeline", "run", and "exec" with the claude adapter
+  RUNS_DIR            override artifact storage path (default: ./runs)
+`.trim());
+}
+
+async function cmdRun(prompt: string): Promise<void> {
+  const apiKey = process.env["ANTHROPIC_API_KEY"];
+  if (!apiKey) {
+    console.error("Error: ANTHROPIC_API_KEY is not set.");
+    process.exit(1);
+  }
+
+  const events = createFileEventLog(RUNS_DIR);
+  const builder = createSpecBuilder(RUNS_DIR, events, { llmApiKey: apiKey });
+
+  console.error("Parsing prompt and generating locked spec...");
+  const spec = await builder.build(prompt);
+
+  const output = {
+    runId: spec.id,
+    status: "provisioned",
+    goal: spec.goal,
+    constraints: spec.constraints,
+    successCriteria: spec.successCriteria.map((c) => ({
+      checkKind: c.checkKind,
+      description: c.description,
+    })),
+    workerConfig: spec.workerConfig,
+    lockedAt: spec.lockedAt,
+    paths: {
+      runDir: join(RUNS_DIR, spec.id),
+      spec: join(RUNS_DIR, spec.id, "spec.json"),
+      runRecord: join(RUNS_DIR, spec.id, "run.json"),
+      events: join(RUNS_DIR, spec.id, "events.jsonl"),
+    },
+  };
+
+  console.log(JSON.stringify(output, null, 2));
+}
+
+// ─── Shared orchestrator factory ─────────────────────────────────────────────
+
+function buildOrchestrator(adapterName: string) {
+  const apiKey = process.env["ANTHROPIC_API_KEY"];
+
+  const workers = createWorkerRegistry();
+  workers.register(createStubWorkerAdapter());
+  if (apiKey) {
+    workers.register(createClaudeWorkerAdapter(apiKey));
+  } else if (adapterName === "claude") {
+    console.error("Error: ANTHROPIC_API_KEY is required for the claude adapter.");
+    process.exit(1);
+  }
+
+  const events = createFileEventLog(RUNS_DIR);
+  const specBuilder = createSpecBuilder(RUNS_DIR, events, {
+    llmApiKey: apiKey ?? "",
+  });
+
+  const environmentManager = process.env["DOCKER_ENV"] === "1"
+    ? createDockerEnvironmentManager(RUNS_DIR)
+    : undefined;
+
+  if (environmentManager) console.error("Docker environment enabled (DOCKER_ENV=1).");
+
+  return createOrchestrator({
+    runsDir: RUNS_DIR,
+    events,
+    workspace: null as never,
+    workers,
+    verifier: createVerifier(),
+    recorder: createRecorder(),
+    evaluator: createEvaluator(),
+    specBuilder,
+    ...(environmentManager ? { environmentManager } : {}),
+  });
+}
+
+function formatPipelineResult(pr: PipelineResult): object {
+  // Pick best candidate for the headline score
+  const best = pr.candidates.reduce((a, b) =>
+    a.debate.totalScore >= b.debate.totalScore ? a : b
+  );
+
+  return {
+    runId: pr.runId,
+    recommendation: pr.recommendation,
+    totalScore: best.debate.totalScore,
+    rationale: best.debate.rationale,
+    spec: {
+      goal: pr.spec.goal,
+      constraints: pr.spec.constraints,
+      successCriteria: pr.spec.successCriteria.map((c) => ({
+        checkKind: c.checkKind,
+        description: c.description,
+      })),
+    },
+    candidates: pr.candidates.map((c, i) => ({
+      index: i + 1,
+      candidateId: c.candidateId,
+      score: c.debate.totalScore,
+      recommendation: c.debate.recommendation,
+      build: {
+        success: c.build.success,
+        artifactCount: c.build.artifacts.length,
+        durationMs: c.build.durationMs,
+        ...(c.build.error ? { error: c.build.error } : {}),
+        ...(c.build.tokenUsage ? { tokenUsage: c.build.tokenUsage } : {}),
+      },
+      verification: {
+        state: c.verification.state,
+        passed: c.verification.passed,
+        checks: c.verification.checks.map((ck) => ({
+          name: ck.name,
+          passed: ck.passed,
+          skipped: ck.skipped,
+          reason: ck.reason,
+        })),
+      },
+      recording: {
+        stepCount: c.recording.demoLog.length,
+        videoRecorded: !!c.recording.videoPath,
+        screenshotCount: c.recording.screenshotPaths.length,
+        steps: c.recording.demoLog.map((s) => ({
+          description: s.description,
+          exitCode: s.exitCode,
+          ...(s.exitCode !== 0 ? { stderr: s.stderr.slice(0, 120) } : {}),
+        })),
+      },
+      debate: {
+        rationale: c.debate.rationale,
+        dimensions: c.debate.dimensions.map((d) => ({
+          name: d.name,
+          weight: d.weight,
+          score: d.score,
+          rationale: d.rationale,
+        })),
+      },
+    })),
+    totalDurationMs: pr.totalDurationMs,
+    completedAt: pr.completedAt,
+    paths: {
+      runDir: join(RUNS_DIR, pr.runId),
+      result: join(RUNS_DIR, pr.runId, "result.json"),
+      spec: join(RUNS_DIR, pr.runId, "spec.json"),
+      events: join(RUNS_DIR, pr.runId, "events.jsonl"),
+      candidates: join(RUNS_DIR, pr.runId, "candidates"),
+    },
+  };
+}
+
+// ─── pipeline command ─────────────────────────────────────────────────────────
+
+async function cmdPipeline(prompt: string): Promise<void> {
+  const apiKey = process.env["ANTHROPIC_API_KEY"];
+  if (!apiKey) {
+    console.error("Error: ANTHROPIC_API_KEY is required.");
+    process.exit(1);
+  }
+
+  const events = createFileEventLog(RUNS_DIR);
+  const specBuilder = createSpecBuilder(RUNS_DIR, events, { llmApiKey: apiKey });
+
+  // Peek at the default adapter to build the registry
+  const workers = createWorkerRegistry();
+  workers.register(createStubWorkerAdapter());
+  workers.register(createClaudeWorkerAdapter(apiKey));
+
+  const environmentManager = process.env["DOCKER_ENV"] === "1"
+    ? createDockerEnvironmentManager(RUNS_DIR)
+    : undefined;
+
+  if (environmentManager) console.error("Docker environment enabled (DOCKER_ENV=1).");
+
+  const orchestrator = createOrchestrator({
+    runsDir: RUNS_DIR,
+    events,
+    workspace: null as never,
+    workers,
+    verifier: createVerifier(),
+    recorder: createRecorder(),
+    evaluator: createEvaluator(),
+    specBuilder,
+    ...(environmentManager ? { environmentManager } : {}),
+  });
+
+  console.error("Running full pipeline...");
+  const result = await orchestrator.run(prompt);
+  await patchRunRecord(join(RUNS_DIR, result.runId), "completed");
+
+  console.log(JSON.stringify(formatPipelineResult(result), null, 2));
+}
+
+// ─── exec command (rerun against existing spec) ───────────────────────────────
+
+async function cmdExec(runId: string): Promise<void> {
+  const runDir = join(RUNS_DIR, runId);
+
+  let spec: RunSpec;
+  try {
+    spec = JSON.parse(
+      await readFile(join(runDir, "spec.json"), "utf8")
+    ) as RunSpec;
+  } catch {
+    console.error(`No locked spec found for run ${runId} at ${runDir}`);
+    process.exit(1);
+  }
+
+  if (!spec.lockedAt) {
+    console.error("Spec is not locked. Run 'run' first.");
+    process.exit(1);
+  }
+
+  await patchRunRecord(runDir, "building");
+
+  const orchestrator = buildOrchestrator(spec.workerConfig.adapterName);
+
+  console.error(`Executing pipeline for run ${runId} (adapter: ${spec.workerConfig.adapterName})...`);
+  const result = await orchestrator.rerun(runId);
+  await patchRunRecord(runDir, "completed");
+
+  console.log(JSON.stringify(formatPipelineResult(result), null, 2));
+}
+
+async function patchRunRecord(
+  runDir: string,
+  status: RunRecord["status"]
+): Promise<void> {
+  try {
+    const record = JSON.parse(
+      await readFile(join(runDir, "run.json"), "utf8")
+    ) as RunRecord;
+    const updated: RunRecord = {
+      ...record,
+      status,
+      updatedAt: new Date().toISOString(),
+    };
+    await writeFile(join(runDir, "run.json"), JSON.stringify(updated, null, 2), "utf8");
+  } catch {
+    // non-fatal: run.json may not exist on a manually constructed run
+  }
+}
+
+async function cmdShow(runId: string): Promise<void> {
+  const runDir = join(RUNS_DIR, runId);
+
+  let runRecord: RunRecord;
+  let spec: RunSpec | null = null;
+
+  try {
+    runRecord = JSON.parse(
+      await readFile(join(runDir, "run.json"), "utf8")
+    ) as RunRecord;
+  } catch {
+    console.error(`No run found at ${runDir}`);
+    process.exit(1);
+  }
+
+  try {
+    spec = JSON.parse(
+      await readFile(join(runDir, "spec.json"), "utf8")
+    ) as RunSpec;
+  } catch {
+    // spec may not exist yet if run failed early
+  }
+
+  const candidates = createFsCandidateManager(RUNS_DIR);
+  const candidateList = await candidates.listForRun(runId);
+
+  console.log(JSON.stringify({ runRecord, spec, candidates: candidateList }, null, 2));
+}
+
+async function main(): Promise<void> {
+  const [, , command, ...args] = process.argv;
+
+  if (command === "pipeline") {
+    const prompt = args.join(" ").trim();
+    if (!prompt) {
+      console.error("Error: prompt is required.\n");
+      usage();
+      process.exit(1);
+    }
+    await cmdPipeline(prompt);
+    return;
+  }
+
+  if (command === "run") {
+    const prompt = args.join(" ").trim();
+    if (!prompt) {
+      console.error("Error: prompt is required.\n");
+      usage();
+      process.exit(1);
+    }
+    await cmdRun(prompt);
+    return;
+  }
+
+  if (command === "exec") {
+    const runId = args[0]?.trim();
+    if (!runId) {
+      console.error("Error: runId is required.\n");
+      usage();
+      process.exit(1);
+    }
+    await cmdExec(runId);
+    return;
+  }
+
+  if (command === "show") {
+    const runId = args[0]?.trim();
+    if (!runId) {
+      console.error("Error: runId is required.\n");
+      usage();
+      process.exit(1);
+    }
+    await cmdShow(runId);
+    return;
+  }
+
+  usage();
+  process.exit(command ? 1 : 0);
+}
+
+main().catch((err: unknown) => {
+  console.error("Fatal:", err instanceof Error ? err.message : err);
+  process.exit(1);
+});
