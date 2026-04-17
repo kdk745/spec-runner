@@ -10,7 +10,10 @@
  * (videoPath will be undefined; demoLog is always populated).
  */
 
-import type { RunSpec, Workspace, RecordingResult, DemoStep, ExecFn, ServerSpawnFn } from "../types/index.js";
+import type { RunSpec, Workspace, RecordingResult, RecordingManifest, ApiTrace, DemoStep, ExecFn, ServerSpawnFn } from "../types/index.js";
+
+export type { RecordingManifest, ApiTrace };
+export { loadFrames, loadFramesFromPath } from "./video-ingest.js";
 
 export type { ExecFn, ServerSpawnFn };
 
@@ -44,7 +47,8 @@ export type DemoStepKind =
   | "shell"              // run a shell command in workspace root
   | "browser-navigate"   // navigate to command (URL)
   | "browser-screenshot" // take a screenshot, command is the filename
-  | "browser-api-call";  // fetch via page.evaluate() + inject overlay + screenshot
+  | "browser-api-call"   // fetch via page.evaluate() + inject overlay + screenshot
+  | "browser-type";      // type command text into first visible input, then screenshot
 
 export interface DemoScriptStep {
   kind: DemoStepKind;

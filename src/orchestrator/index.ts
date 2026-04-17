@@ -29,6 +29,8 @@ import type { Verifier } from "../verifier/index.js";
 import type { Recorder } from "../recorder/index.js";
 import type { Evaluator } from "../evaluator/index.js";
 import type { EnvironmentManager } from "../environment/index.js";
+import type { UXEvaluator, UXDebater } from "../ux-evaluator/index.js";
+import type { Submitter } from "../submitter/index.js";
 
 // ─── Spec Builder ─────────────────────────────────────────────────────────────
 
@@ -67,6 +69,14 @@ export interface OrchestratorConfig {
   specBuilder: SpecBuilder;
   /** When provided, each candidate runs in a managed compute environment (e.g. Docker). */
   environmentManager?: EnvironmentManager;
+  /** Primary UX evaluator — correctness + CRUD completeness focus. */
+  uxEvaluator?: UXEvaluator;
+  /** Secondary UX evaluator — response quality + consistency focus. Required for debate. */
+  uxEvaluatorB?: UXEvaluator;
+  /** Debate moderator — runs after both evaluations, produces bounded transcript + final winner. */
+  uxDebater?: UXDebater;
+  /** Submitter — sends the completed payload for human review. Stub writes to disk; swap for real destination. */
+  submitter?: Submitter;
 }
 
 export interface Orchestrator {

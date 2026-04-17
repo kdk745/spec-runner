@@ -12,7 +12,7 @@
  * Additional adapters (local shell, Docker sandbox) follow the same interface.
  */
 
-import type { RunSpec, Workspace, BuildResult } from "../types/index.js";
+import type { RunSpec, Workspace, BuildResult, RepairContext } from "../types/index.js";
 
 export interface WorkerAdapter {
   /** Unique stable identifier, matched against RunSpec.workerConfig.adapterName */
@@ -21,8 +21,12 @@ export interface WorkerAdapter {
   /**
    * Execute the spec against the isolated workspace.
    * Must resolve (not reject) even on failure — return success:false with error set.
+   *
+   * When repairContext is provided the adapter is being asked to fix a prior
+   * attempt. The workspace still contains the previous files — the adapter
+   * should overwrite or add files to address the failed checks.
    */
-  execute(spec: RunSpec, workspace: Workspace): Promise<BuildResult>;
+  execute(spec: RunSpec, workspace: Workspace, repairContext?: RepairContext): Promise<BuildResult>;
 }
 
 // ─── Registry ────────────────────────────────────────────────────────────────

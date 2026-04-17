@@ -22,7 +22,7 @@ import Anthropic from "@anthropic-ai/sdk";
 import { writeFile, mkdir } from "node:fs/promises";
 import { join, dirname } from "node:path";
 import type { WorkerAdapter } from "./adapter.js";
-import type { RunSpec, Workspace, BuildResult, Artifact, TokenUsage } from "../types/index.js";
+import type { RunSpec, Workspace, BuildResult, Artifact, TokenUsage, RepairContext } from "../types/index.js";
 import { log } from "../logger.js";
 
 interface WriteFileInput {
@@ -41,22 +41,26 @@ interface BuildManifest {
   generatedAt: string;
 }
 
-// Output token cap: never exceed the spec budget, and cap at 4096 for safety.
-const MAX_OUTPUT_TOKENS = 4096;
+// Output token cap per turn — large enough for multi-file React/Vite apps.
+const MAX_OUTPUT_TOKENS = 8192;
+// Maximum agentic turns before we stop and return whatever was written.
+const MAX_TURNS = 20;
 
 const SYSTEM_PROMPT = `You are a code generator. Produce a minimal, runnable implementation.
 
 Use the write_file tool for every file you create. Write files only — no prose, no explanation.
 
 Rules:
-- Maximum 6 files total
+- Write as many files as the spec requires — do not artificially limit file count
 - Every file must have correct syntax and working imports
 - Include a README.md with a single run command
 - Honour every constraint in the spec exactly
 - Prefer plain Node.js or the specified runtime — no unnecessary frameworks
 - For TypeScript projects: set "start" script to \`node dist/index.js\` and "build" to \`tsc\`
 - Never use ts-node in package.json scripts — always compile first with tsc, then run with node
-- tsconfig.json must include \`"outDir": "dist"\` and \`"rootDir": "src"\``;
+- tsconfig.json must include \`"outDir": "dist"\` and \`"rootDir": "src"\`
+- For React/Vite projects: do NOT set outDir/rootDir in tsconfig; use the default Vite tsconfig
+- For React/Vite projects: always write src/App.tsx as the root component imported by src/main.tsx`;
 
 export class ClaudeWorkerAdapter implements WorkerAdapter {
   readonly name = "claude";
@@ -65,17 +69,19 @@ export class ClaudeWorkerAdapter implements WorkerAdapter {
   private readonly model: string;
 
   constructor(apiKey: string, model = "claude-haiku-4-5-20251001") {
-    this.client = new Anthropic({ apiKey });
+    // maxRetries=5: SDK handles 429/5xx with exponential backoff automatically
+    this.client = new Anthropic({ apiKey, maxRetries: 5 });
     this.model = model;
   }
 
-  async execute(spec: RunSpec, workspace: Workspace): Promise<BuildResult> {
+  async execute(spec: RunSpec, workspace: Workspace, repairContext?: RepairContext): Promise<BuildResult> {
     const startedAt = Date.now();
     const writtenFiles: Array<{ path: string; sizeBytes: number }> = [];
     const timeoutMs = spec.workerConfig.timeoutMs;
     const overallDeadline = startedAt + timeoutMs;
 
-    log("build", `Starting (model: ${this.model}, budget: ${spec.workerConfig.maxTokenBudget} tokens, timeout: ${timeoutMs / 1000}s)`);
+    const phase = repairContext ? `repair attempt ${repairContext.attempt}` : "initial build";
+    log("build", `Starting ${phase} (model: ${this.model}, budget: ${spec.workerConfig.maxTokenBudget} tokens, timeout: ${timeoutMs / 1000}s)`);
 
     try {
       const maxTokens = Math.min(
@@ -84,13 +90,12 @@ export class ClaudeWorkerAdapter implements WorkerAdapter {
       );
 
       const messages: Anthropic.MessageParam[] = [
-        { role: "user", content: buildUserPrompt(spec) },
+        { role: "user", content: repairContext ? buildRepairPrompt(spec, repairContext) : buildUserPrompt(spec) },
       ];
 
       let totalInputTokens = 0;
       let totalOutputTokens = 0;
       let finalStopReason = "end_turn";
-      const MAX_TURNS = 10;
 
       // Agentic loop: continue until the model stops requesting tool calls
       for (let turn = 0; turn < MAX_TURNS; turn++) {
@@ -291,6 +296,47 @@ function buildUserPrompt(spec: RunSpec): string {
   }
   lines.push("");
   lines.push("Write the minimum files needed to satisfy all criteria.");
+
+  const styleHint = spec.workerConfig.options?.["styleHint"];
+  if (typeof styleHint === "string" && styleHint.length > 0) {
+    lines.push("");
+    lines.push("Style guidance (follow this throughout your implementation):");
+    lines.push(styleHint);
+  }
+
+  return lines.join("\n");
+}
+
+function buildRepairPrompt(spec: RunSpec, ctx: RepairContext): string {
+  const lines: string[] = [];
+
+  lines.push(`Goal: ${spec.goal}`);
+  lines.push("");
+
+  if (spec.constraints.length > 0) {
+    lines.push("Constraints:");
+    for (const c of spec.constraints) lines.push(`- ${c}`);
+    lines.push("");
+  }
+
+  lines.push("Success criteria:");
+  for (let i = 0; i < spec.successCriteria.length; i++) {
+    const c = spec.successCriteria[i]!;
+    lines.push(`${i + 1}. [${c.checkKind}] ${c.description}`);
+  }
+  lines.push("");
+
+  lines.push(`REPAIR ATTEMPT ${ctx.attempt}: Your previous implementation failed self-verification.`);
+  lines.push("The workspace still contains your previous files.");
+  lines.push("");
+  lines.push("Failing checks:");
+  for (const check of ctx.failedChecks) {
+    const status = check.httpStatus !== undefined ? ` (HTTP ${check.httpStatus})` : "";
+    lines.push(`- ${check.endpoint}${status}: ${check.reason}`);
+  }
+  lines.push("");
+  lines.push("Use write_file to overwrite or add files to fix these failures.");
+  lines.push("Write only what needs to change — do not re-write files that are already correct.");
 
   return lines.join("\n");
 }

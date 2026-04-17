@@ -28,7 +28,7 @@
 import { writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import type { WorkerAdapter } from "./adapter.js";
-import type { RunSpec, Workspace, BuildResult, Artifact } from "../types/index.js";
+import type { RunSpec, Workspace, BuildResult, Artifact, RepairContext } from "../types/index.js";
 
 /** Shape of pitch.json written to every candidate workspace. */
 interface PitchDocument {
@@ -45,7 +45,8 @@ interface PitchDocument {
 export class StubWorkerAdapter implements WorkerAdapter {
   readonly name = "stub";
 
-  async execute(spec: RunSpec, workspace: Workspace): Promise<BuildResult> {
+  // eslint-disable-next-line @typescript-eslint/no-unused-vars
+  async execute(spec: RunSpec, workspace: Workspace, _repairContext?: RepairContext): Promise<BuildResult> {
     const startedAt = Date.now();
 
     try {

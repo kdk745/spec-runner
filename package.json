@@ -5,9 +5,9 @@
   "type": "module",
   "main": "dist/cli.js",
   "scripts": {
-    "build": "tsc --noEmit",
+    "compile": "tsc",
     "typecheck": "tsc --noEmit",
-    "start": "node --experimental-specifier-resolution=node dist/cli.js"
+    "arena": "node dist/cli.js pipeline"
   },
   "dependencies": {
     "@anthropic-ai/sdk": "^0.39.0",

@@ -15,6 +15,7 @@ import "dotenv/config";
 import { readFile, writeFile } from "node:fs/promises";
 import { join, resolve } from "node:path";
 import { createFileEventLog } from "./events/index.js";
+import { logBanner, logStage } from "./logger.js";
 import { createSpecBuilder } from "./orchestrator/spec-builder.js";
 import { createOrchestrator } from "./orchestrator/index.js";
 import { createFsCandidateManager } from "./candidate/index.js";
@@ -26,6 +27,8 @@ import {
 import { createVerifier } from "./verifier/index.js";
 import { createRecorder } from "./recorder/index.js";
 import { createEvaluator } from "./evaluator/index.js";
+import { createClaudeUXEvaluator, createClaudeUXDebater } from "./ux-evaluator/index.js";
+import { createStubSubmitter, createWebhookSubmitter } from "./submitter/index.js";
 import { createDockerEnvironmentManager } from "./environment/docker-manager.js";
 import type { RunRecord, RunSpec, PipelineResult } from "./types/index.js";
 
@@ -105,6 +108,14 @@ function buildOrchestrator(adapterName: string) {
 
   if (environmentManager) console.error("Docker environment enabled (DOCKER_ENV=1).");
 
+  const uxEvaluator  = apiKey ? createClaudeUXEvaluator(apiKey, "correctness") : undefined;
+  const uxEvaluatorB = apiKey ? createClaudeUXEvaluator(apiKey, "quality")     : undefined;
+  const uxDebater    = apiKey ? createClaudeUXDebater(apiKey)                  : undefined;
+  const webhookUrl   = process.env["SUBMIT_WEBHOOK_URL"];
+  const submitter    = webhookUrl
+    ? createWebhookSubmitter(RUNS_DIR, { url: webhookUrl })
+    : createStubSubmitter(RUNS_DIR);
+
   return createOrchestrator({
     runsDir: RUNS_DIR,
     events,
@@ -114,7 +125,11 @@ function buildOrchestrator(adapterName: string) {
     recorder: createRecorder(),
     evaluator: createEvaluator(),
     specBuilder,
+    submitter,
     ...(environmentManager ? { environmentManager } : {}),
+    ...(uxEvaluator  ? { uxEvaluator }  : {}),
+    ...(uxEvaluatorB ? { uxEvaluatorB } : {}),
+    ...(uxDebater    ? { uxDebater }    : {}),
   });
 }
 
@@ -159,6 +174,40 @@ function formatPipelineResult(pr: PipelineResult): object {
           reason: ck.reason,
         })),
       },
+      selfVerification: {
+        passed: c.selfVerification.passed,
+        serverStarted: c.selfVerification.serverStarted,
+        checksPassed: c.selfVerification.checks.filter((ck) => ck.passed).length,
+        checksTotal: c.selfVerification.checks.length,
+        checks: c.selfVerification.checks.map((ck) => ({
+          endpoint: ck.endpoint,
+          passed: ck.passed,
+          ...(ck.httpStatus !== undefined ? { httpStatus: ck.httpStatus } : {}),
+          reason: ck.reason,
+        })),
+      },
+      ...(c.repairAttempt ? {
+        repairAttempt: {
+          attempt: c.repairAttempt.attempt,
+          buildSuccess: c.repairAttempt.build.success,
+          selfVerificationPassed: c.repairAttempt.selfVerification.passed,
+          checksPassed: c.repairAttempt.selfVerification.checks.filter((ck) => ck.passed).length,
+          checksTotal: c.repairAttempt.selfVerification.checks.length,
+          checks: c.repairAttempt.selfVerification.checks.map((ck) => ({
+            endpoint: ck.endpoint,
+            passed: ck.passed,
+            ...(ck.httpStatus !== undefined ? { httpStatus: ck.httpStatus } : {}),
+            reason: ck.reason,
+          })),
+        },
+      } : {}),
+      ...(c.escalation ? {
+        escalation: {
+          reason: c.escalation.reason,
+          failedCheckCount: c.escalation.failedChecks.length,
+          failedChecks: c.escalation.failedChecks.map((ck) => ck.endpoint),
+        },
+      } : {}),
       recording: {
         stepCount: c.recording.demoLog.length,
         videoRecorded: !!c.recording.videoPath,
@@ -179,6 +228,60 @@ function formatPipelineResult(pr: PipelineResult): object {
         })),
       },
     })),
+    ...(pr.uxEvaluation ? {
+      uxEvaluationA: {
+        recommendedWinner: pr.uxEvaluation.recommendedWinner,
+        rationale: pr.uxEvaluation.rationale,
+        tradeoffs: pr.uxEvaluation.tradeoffs,
+        ranking: pr.uxEvaluation.ranking.map((a) => ({
+          candidateId: a.candidateId,
+          rank: a.rank,
+          score: a.score,
+          strengths: a.strengths,
+          weaknesses: a.weaknesses,
+          observedMoments: a.observedMoments,
+        })),
+      },
+    } : {}),
+    ...(pr.uxEvaluationB ? {
+      uxEvaluationB: {
+        recommendedWinner: pr.uxEvaluationB.recommendedWinner,
+        rationale: pr.uxEvaluationB.rationale,
+        tradeoffs: pr.uxEvaluationB.tradeoffs,
+        ranking: pr.uxEvaluationB.ranking.map((a) => ({
+          candidateId: a.candidateId,
+          rank: a.rank,
+          score: a.score,
+          strengths: a.strengths,
+          weaknesses: a.weaknesses,
+          observedMoments: a.observedMoments,
+        })),
+      },
+    } : {}),
+    ...(pr.uxDebate ? {
+      uxDebate: {
+        finalWinner: pr.uxDebate.finalWinner,
+        finalRationale: pr.uxDebate.finalRationale,
+        consensusPoints: pr.uxDebate.consensusPoints,
+        disputedPoints: pr.uxDebate.disputedPoints,
+        rounds: pr.uxDebate.rounds.map((r) => ({
+          evaluatorId: r.evaluatorId,
+          roundIndex: r.roundIndex,
+          position: r.position,
+          evidenceRefs: r.evidenceRefs,
+          concessions: r.concessions,
+        })),
+      },
+    } : {}),
+    ...(pr.submission ? {
+      submission: {
+        status: pr.submission.status,
+        submissionId: pr.submission.submissionId,
+        destination: pr.submission.destination,
+        payloadPath: pr.submission.payloadPath,
+        submittedAt: pr.submission.submittedAt,
+      },
+    } : {}),
     totalDurationMs: pr.totalDurationMs,
     completedAt: pr.completedAt,
     paths: {
@@ -187,6 +290,7 @@ function formatPipelineResult(pr: PipelineResult): object {
       spec: join(RUNS_DIR, pr.runId, "spec.json"),
       events: join(RUNS_DIR, pr.runId, "events.jsonl"),
       candidates: join(RUNS_DIR, pr.runId, "candidates"),
+      ...(pr.submission ? { submission: pr.submission.payloadPath } : {}),
     },
   };
 }
@@ -196,41 +300,120 @@ function formatPipelineResult(pr: PipelineResult): object {
 async function cmdPipeline(prompt: string): Promise<void> {
   const apiKey = process.env["ANTHROPIC_API_KEY"];
   if (!apiKey) {
-    console.error("Error: ANTHROPIC_API_KEY is required.");
+    logBanner([
+      "ERROR: ANTHROPIC_API_KEY is not set.",
+      "",
+      "Export it before running:",
+      "  export ANTHROPIC_API_KEY=sk-ant-...",
+    ]);
     process.exit(1);
   }
 
-  const events = createFileEventLog(RUNS_DIR);
-  const specBuilder = createSpecBuilder(RUNS_DIR, events, { llmApiKey: apiKey });
+  const webhookUrl = process.env["SUBMIT_WEBHOOK_URL"];
+  const dockerEnv  = process.env["DOCKER_ENV"] === "1";
 
-  // Peek at the default adapter to build the registry
-  const workers = createWorkerRegistry();
+  logBanner([
+    "SPEC RUNNER ARENA",
+    "",
+    `Prompt : ${prompt.length > 72 ? prompt.slice(0, 72) + "…" : prompt}`,
+    `Output : ${RUNS_DIR}`,
+    `Adapter: claude`,
+    `Submit : ${webhookUrl ? `webhook → ${webhookUrl.split("?")[0]}` : "dry-run (set SUBMIT_WEBHOOK_URL to send)"}`,
+    ...(dockerEnv ? ["Env    : Docker (DOCKER_ENV=1)"] : []),
+    "",
+    "Stages : provision → build ×3 → record → evaluate A+B → debate → submit",
+  ]);
+
+  const events      = createFileEventLog(RUNS_DIR);
+  const specBuilder = createSpecBuilder(RUNS_DIR, events, { llmApiKey: apiKey });
+  const workers     = createWorkerRegistry();
   workers.register(createStubWorkerAdapter());
   workers.register(createClaudeWorkerAdapter(apiKey));
 
-  const environmentManager = process.env["DOCKER_ENV"] === "1"
+  const environmentManager = dockerEnv
     ? createDockerEnvironmentManager(RUNS_DIR)
     : undefined;
-
-  if (environmentManager) console.error("Docker environment enabled (DOCKER_ENV=1).");
 
   const orchestrator = createOrchestrator({
     runsDir: RUNS_DIR,
     events,
     workspace: null as never,
     workers,
-    verifier: createVerifier(),
-    recorder: createRecorder(),
-    evaluator: createEvaluator(),
+    verifier:     createVerifier(),
+    recorder:     createRecorder(),
+    evaluator:    createEvaluator(),
     specBuilder,
+    uxEvaluator:  createClaudeUXEvaluator(apiKey, "correctness"),
+    uxEvaluatorB: createClaudeUXEvaluator(apiKey, "quality"),
+    uxDebater:    createClaudeUXDebater(apiKey),
+    submitter:    webhookUrl
+      ? createWebhookSubmitter(RUNS_DIR, { url: webhookUrl })
+      : createStubSubmitter(RUNS_DIR),
     ...(environmentManager ? { environmentManager } : {}),
   });
 
-  console.error("Running full pipeline...");
-  const result = await orchestrator.run(prompt);
+  logStage("provision", "locking spec");
+
+  let result: PipelineResult;
+  try {
+    result = await orchestrator.run(prompt);
+  } catch (err) {
+    const msg = err instanceof Error ? err.message : String(err);
+    logBanner([
+      "PIPELINE FAILED",
+      "",
+      `Error : ${msg}`,
+      "",
+      "Partial artifacts (if any) are in:",
+      `  ${RUNS_DIR}/`,
+      "",
+      "Check events.jsonl inside the run directory for the last stage reached.",
+    ]);
+    process.exit(1);
+  }
+
   await patchRunRecord(join(RUNS_DIR, result.runId), "completed");
 
+  // Determine winner label from submission payload or fallback to recommendation
+  const winnerRecord = result.candidates.find(
+    (c) => c.candidateId === (result.uxDebate?.finalWinner ?? result.recommendation)
+  ) ?? result.candidates[0]!;
+  const winnerLabel = `Candidate ${result.candidates.indexOf(winnerRecord) + 1}`;
+
+  const sub = result.submission;
+  const runDir = join(RUNS_DIR, result.runId);
+
+  logBanner([
+    "PIPELINE COMPLETE",
+    "",
+    `Run ID   : ${result.runId}`,
+    `Duration : ${formatMs(result.totalDurationMs)}`,
+    `Winner   : ${winnerLabel} (${winnerRecord.candidateId.slice(0, 8)})`,
+    ...(result.uxDebate
+      ? [`Rationale: ${result.uxDebate.finalRationale.slice(0, 72)}…`]
+      : []),
+    "",
+    "Artifacts:",
+    `  Result     : ${join(runDir, "result.json")}`,
+    `  Spec       : ${join(runDir, "spec.json")}`,
+    `  Events     : ${join(runDir, "events.jsonl")}`,
+    `  Candidates : ${join(runDir, "candidates")}`,
+    ...(result.uxDebate
+      ? [`  Debate     : ${join(runDir, "ux-debate.json")}`]
+      : []),
+    ...(sub
+      ? [`  Submission : ${sub.payloadPath}  [${sub.status}]`]
+      : []),
+  ]);
+
+  // Structured JSON to stdout — pipe-friendly
   console.log(JSON.stringify(formatPipelineResult(result), null, 2));
+}
+
+function formatMs(ms: number): string {
+  const s = Math.round(ms / 1000);
+  const m = Math.floor(s / 60);
+  return m > 0 ? `${m}m ${s % 60}s` : `${s}s`;
 }
 
 // ─── exec command (rerun against existing spec) ───────────────────────────────

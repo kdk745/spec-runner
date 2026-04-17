@@ -17,6 +17,7 @@
  */
 
 import { mkdir, writeFile, rename } from "node:fs/promises";
+import { buildFrameIndex } from "./video-ingest.js";
 import { join, dirname } from "node:path";
 import type { Recorder, DemoScript, DemoScriptStep, RecordOptions } from "./index.js";
 import {
@@ -33,6 +34,9 @@ import type {
   RecordingResult,
   DemoStep,
   SuccessCriterion,
+  ApiTraceStep,
+  ApiTrace,
+  VideoFrameIndex,
 } from "../types/index.js";
 
 const SERVER_WAIT_MS = 15_000;
@@ -44,6 +48,7 @@ interface ApiOperation {
   method: "GET" | "POST" | "PUT" | "PATCH" | "DELETE";
   path: string;          // e.g. /todos or /todos/:id
   body?: string;         // JSON string, for POST/PUT/PATCH
+  description?: string;  // human-readable step label for overlays and manifest
 }
 
 export class DefaultRecorder implements Recorder {
@@ -73,7 +78,7 @@ export class DefaultRecorder implements Recorder {
         const file = `step-api-${stepIdx}.png`;
         steps.push({
           kind: "browser-api-call",
-          description: `${op.method} ${op.path}`,
+          description: op.description ?? `${op.method} ${op.path}`,
           command: `${op.method} ${op.path}`,
           required: false,
           timeoutMs: 10_000,
@@ -83,7 +88,7 @@ export class DefaultRecorder implements Recorder {
         stepIdx++;
       }
     } else {
-      // Fallback: navigate + screenshot for each URL path in criteria
+      // Frontend app — navigate + interactive UI recording
       steps.push({
         kind: "browser-navigate",
         description: `Navigate to ${baseUrl}`,
@@ -93,32 +98,31 @@ export class DefaultRecorder implements Recorder {
       });
       steps.push({
         kind: "browser-screenshot",
-        description: "Capture main page",
-        command: "step-main.png",
+        description: "Initial page state",
+        command: "step-01-initial.png",
         required: false,
         timeoutMs: 5_000,
       });
 
-      for (const c of spec.successCriteria) {
-        if (c.checkKind !== "runtime") continue;
-        const path = extractUrlPath(c.description);
-        if (!path || path === "/") continue;
-        const url = baseUrl.replace(/\/$/, "") + path;
+      // Generic interaction sequence: type progressively stronger inputs into
+      // the first visible text/password input, screenshot after each.
+      // Useful for password meters, search boxes, form validation, etc.
+      const inputSamples: Array<{ text: string; label: string }> = [
+        { text: "abc",         label: "short input" },
+        { text: "Password1",   label: "medium input" },
+        { text: "P@ssw0rd1!",  label: "strong input" },
+      ];
+
+      for (let s = 0; s < inputSamples.length; s++) {
+        const sample = inputSamples[s]!;
         steps.push({
-          kind: "browser-navigate",
-          description: `Navigate to ${path}`,
-          command: url,
-          required: false,
-          timeoutMs: 10_000,
-        });
-        steps.push({
-          kind: "browser-screenshot",
-          description: `Capture ${path}`,
-          command: `step-nav-${stepIdx}.png`,
+          kind: "browser-type",
+          description: `Type ${sample.label} (${sample.text})`,
+          command: sample.text,
           required: false,
           timeoutMs: 5_000,
+          screenshotFile: `step-0${s + 2}-type-${s + 1}.png`,
         });
-        stepIdx += 2;
       }
     }
 
@@ -143,6 +147,8 @@ export class DefaultRecorder implements Recorder {
     const screenshotPaths: string[] = [];
     let videoPath: string | undefined;
     let stepIndex = 0;
+    let traceSteps: ApiTraceStep[] = [];
+    let resolvedBaseUrl = "";
 
     // ── Prepare workspace (npm install + build) ──────────────────────────────
     log("record", `Preparing workspace${opts?.execFn ? " (docker exec)" : ""}...`);
@@ -171,7 +177,7 @@ export class DefaultRecorder implements Recorder {
       shellStep.stderr = "No runnable entry point found in workspace.";
       shellStep.durationMs = 0;
       demoLog.push(shellStep);
-      return this._finish(spec, recordingDir, demoLog, screenshotPaths, videoPath);
+      return this._finish(spec, recordingDir, demoLog, screenshotPaths, videoPath, traceSteps, resolvedBaseUrl);
     }
 
     log("record", `Starting server${opts?.spawnServerFn ? " (docker exec)" : ""}: ${startCmd}`);
@@ -190,7 +196,7 @@ export class DefaultRecorder implements Recorder {
       shellStep.stdout = serverHandle.startupLog.slice(0, 500);
       demoLog.push(shellStep);
       serverHandle.kill();
-      return this._finish(spec, recordingDir, demoLog, screenshotPaths, videoPath);
+      return this._finish(spec, recordingDir, demoLog, screenshotPaths, videoPath, traceSteps, resolvedBaseUrl);
     }
 
     shellStep.exitCode = 0;
@@ -199,6 +205,7 @@ export class DefaultRecorder implements Recorder {
     log("record", `Server ready at ${portResult.url} — launching browser`);
 
     const resolvedBase = portResult.url;
+    resolvedBaseUrl = resolvedBase;
 
     // ── Browser steps ────────────────────────────────────────────────────────
     try {
@@ -209,14 +216,20 @@ export class DefaultRecorder implements Recorder {
         step.stderr = "Playwright not installed. Run: npx playwright install chromium";
         demoLog.push(step);
       } else {
+        const totalApiSteps = script.steps.filter(
+          (s) => s.kind === "browser-api-call"
+        ).length;
+
         const result = await this._runBrowserSteps(
           pw, script, resolvedBase,
           recordingDir, screenshotDir,
           demoLog, screenshotPaths,
-          stepIndex
+          stepIndex,
+          totalApiSteps
         );
         videoPath = result.videoPath;
         stepIndex = result.nextStepIndex;
+        traceSteps = result.traceSteps;
       }
     } catch (err) {
       const step = logStep(stepIndex++, "Browser recording", "playwright");
@@ -227,7 +240,7 @@ export class DefaultRecorder implements Recorder {
       serverHandle.kill();
     }
 
-    return this._finish(spec, recordingDir, demoLog, screenshotPaths, videoPath);
+    return this._finish(spec, recordingDir, demoLog, screenshotPaths, videoPath, traceSteps, resolvedBaseUrl);
   }
 
   // ─── Browser recording via Playwright ────────────────────────────────────
@@ -240,10 +253,13 @@ export class DefaultRecorder implements Recorder {
     screenshotDir: string,
     demoLog: DemoStep[],
     screenshotPaths: string[],
-    startIndex: number
-  ): Promise<{ videoPath?: string; nextStepIndex: number }> {
+    startIndex: number,
+    totalApiSteps: number
+  ): Promise<{ videoPath?: string; nextStepIndex: number; traceSteps: ApiTraceStep[] }> {
     let stepIndex = startIndex;
     let videoPath: string | undefined;
+    let apiStepNum = 0;  // 1-indexed counter for api-call steps only
+    const traceSteps: ApiTraceStep[] = [];
 
     // Track last created resource ID so DELETE/PUT/:id steps can use it
     let lastCreatedId: string | number | null = null;
@@ -304,8 +320,46 @@ export class DefaultRecorder implements Recorder {
           demoLog.push(ssStep);
         }
 
+        // ── browser-type ─────────────────────────────────────────────────
+        if (step.kind === "browser-type") {
+          const typeStep = logStep(stepIndex++, step.description, step.command);
+          const t = Date.now();
+          try {
+            // Clear the first visible input and type the new value
+            await page.evaluate((rawArg: unknown) => {
+              const text = rawArg as string;
+              const input = document.querySelector<HTMLInputElement>(
+                'input[type="password"], input[type="text"], input[type="search"], input:not([type="hidden"])'
+              );
+              if (input) {
+                input.focus();
+                input.value = "";
+                input.dispatchEvent(new Event("input", { bubbles: true }));
+                input.value = text;
+                input.dispatchEvent(new Event("input", { bubbles: true }));
+                input.dispatchEvent(new Event("change", { bubbles: true }));
+              }
+            }, step.command);
+            // Give the UI time to react (real-time listeners)
+            await new Promise(r => setTimeout(r, 600));
+            // Screenshot
+            const filename = step.screenshotFile ?? `step-type-${stepIndex}.png`;
+            const absPath = join(screenshotDir, filename);
+            await page.screenshot({ path: absPath, fullPage: true });
+            screenshotPaths.push(absPath);
+            typeStep.exitCode = 0;
+            typeStep.stdout = `Typed "${step.command}", screenshot: ${filename}`;
+          } catch (err) {
+            typeStep.exitCode = 1;
+            typeStep.stderr = err instanceof Error ? err.message : String(err);
+          }
+          typeStep.durationMs = Date.now() - t;
+          demoLog.push(typeStep);
+        }
+
         // ── api-call ──────────────────────────────────────────────────────
         if (step.kind === "browser-api-call") {
+          apiStepNum++;
           const [method, rawPath] = step.command.split(" ") as [string, string];
 
           // Substitute :id with the last created resource ID
@@ -316,10 +370,15 @@ export class DefaultRecorder implements Recorder {
           const url = resolvedBase.replace(/\/$/, "") + resolvedPath;
           const body = step.body ?? null;
 
-          const apiStep = logStep(stepIndex++, `${method} ${resolvedPath}`, url);
+          const apiStep = logStep(stepIndex++, step.description, url);
           const t = Date.now();
 
           log("record", `  api-call: ${method} ${resolvedPath}${body ? ` body: ${body.slice(0, 60)}` : ""}`);
+
+          // Trace data collected during this step
+          let traceHttpStatus: number | undefined;
+          let traceResponseBody: string | undefined;
+          let traceScreenshotPath: string | undefined;
 
           try {
             // Make the HTTP call from Node.js (no CORS / same-origin restrictions)
@@ -331,6 +390,9 @@ export class DefaultRecorder implements Recorder {
             const res = await globalThis.fetch(url, nodeOpts);
             const responseText = await res.text();
             const result = { status: res.status, body: responseText };
+
+            traceHttpStatus = result.status;
+            traceResponseBody = result.body.slice(0, 4096); // full body for trace
 
             // Track created ID from POST responses
             if (method === "POST" && result.status >= 200 && result.status < 300) {
@@ -344,8 +406,12 @@ export class DefaultRecorder implements Recorder {
             // Inject a styled overlay showing the API call result
             await page.evaluate(
               (rawArg: unknown) => {
-                const { overlayMethod, overlayPath, status, responseBody } =
-                  rawArg as { overlayMethod: string; overlayPath: string; status: number; responseBody: string };
+                const { overlayMethod, overlayPath, status, responseBody, stepLabel, stepDescription } =
+                  rawArg as {
+                    overlayMethod: string; overlayPath: string;
+                    status: number; responseBody: string;
+                    stepLabel: string; stepDescription: string;
+                  };
                 document.querySelectorAll("[data-api-overlay]").forEach(el => el.remove());
                 const el = document.createElement("div");
                 el.setAttribute("data-api-overlay", "1");
@@ -365,6 +431,10 @@ export class DefaultRecorder implements Recorder {
                 let prettyBody = responseBody;
                 try { prettyBody = JSON.stringify(JSON.parse(responseBody), null, 2); } catch { /* ok */ }
                 el.innerHTML = `
+                  <div style="display:flex;align-items:center;gap:6px;margin-bottom:6px">
+                    <span style="color:#6c7086;font-size:11px">${stepLabel}</span>
+                    <span style="color:#cdd6f4;font-size:11px;flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${stepDescription}</span>
+                  </div>
                   <div style="display:flex;align-items:center;gap:8px;margin-bottom:10px">
                     <span style="background:${methodColor[overlayMethod] ?? "#cba6f7"};color:#1e1e2e;padding:2px 8px;border-radius:4px;font-weight:bold;font-size:12px">${overlayMethod}</span>
                     <span style="color:#cdd6f4">${overlayPath}</span>
@@ -374,17 +444,23 @@ export class DefaultRecorder implements Recorder {
                 `;
                 document.body.appendChild(el);
               },
-              { overlayMethod: method, overlayPath: resolvedPath, status: result.status, responseBody: result.body }
+              {
+                overlayMethod: method, overlayPath: resolvedPath,
+                status: result.status, responseBody: result.body,
+                stepLabel: `${apiStepNum}/${totalApiSteps}`,
+                stepDescription: step.description,
+              }
             );
 
             // Wait a moment so the overlay is visible in the video
             await new Promise(r => setTimeout(r, 800));
 
-            // Screenshot with overlay visible
+            // Screenshot with overlay visible — captured for the trace
             const filename = step.screenshotFile ?? `step-api-${stepIndex}.png`;
             const absPath = join(screenshotDir, filename);
             await page.screenshot({ path: absPath, fullPage: false });
             screenshotPaths.push(absPath);
+            traceScreenshotPath = absPath;
 
             apiStep.exitCode = result.status >= 200 && result.status < 300 ? 0 : 1;
             apiStep.stdout = `${result.status} — ${result.body.slice(0, 200)}`;
@@ -404,6 +480,20 @@ export class DefaultRecorder implements Recorder {
 
           apiStep.durationMs = Date.now() - t;
           demoLog.push(apiStep);
+
+          // Accumulate trace step (full fidelity — not truncated like demoLog.stdout)
+          traceSteps.push({
+            index: apiStepNum,
+            description: step.description,
+            method,
+            path: resolvedPath,
+            ...(body ? { requestBody: body } : {}),
+            ...(traceHttpStatus !== undefined ? { httpStatus: traceHttpStatus } : {}),
+            ...(traceResponseBody !== undefined ? { responseBody: traceResponseBody } : {}),
+            passed: apiStep.exitCode === 0,
+            ...(traceScreenshotPath ? { screenshotPath: traceScreenshotPath } : {}),
+            durationMs: apiStep.durationMs,
+          });
         }
       }
     } finally {
@@ -421,7 +511,7 @@ export class DefaultRecorder implements Recorder {
     } catch { /* video save non-fatal */ }
 
     await browser.close();
-    return { ...(videoPath ? { videoPath } : {}), nextStepIndex: stepIndex };
+    return { ...(videoPath ? { videoPath } : {}), nextStepIndex: stepIndex, traceSteps };
   }
 
   // ─── Finalise ─────────────────────────────────────────────────────────────
@@ -431,14 +521,85 @@ export class DefaultRecorder implements Recorder {
     recordingDir: string,
     demoLog: DemoStep[],
     screenshotPaths: string[],
-    videoPath: string | undefined
+    videoPath: string | undefined,
+    traceSteps: ApiTraceStep[],
+    baseUrl: string
   ): Promise<RecordingResult> {
+    const completedAt = new Date().toISOString();
+    const serverStep = demoLog.find((s) => s.description === "Start app server");
+    const serverStarted = serverStep?.exitCode === 0;
+
+    // ── API trace (primary debate input) ─────────────────────────────────────
+    // Deduplicate endpoint labels using the raw path template (":id" not "3")
+    const endpointsSeen = new Set<string>();
+    for (const s of traceSteps) {
+      // Normalise back to template form: replace numeric segments after the resource path
+      const template = s.path.replace(/\/\d+/g, "/:id");
+      endpointsSeen.add(`${s.method} ${template}`);
+    }
+
+    const trace: ApiTrace = {
+      runId: spec.id,
+      scenarioTitle: spec.goal,
+      serverStarted,
+      baseUrl,
+      steps: traceSteps,
+      summary: {
+        totalSteps: traceSteps.length,
+        passed: traceSteps.filter((s) => s.passed).length,
+        failed: traceSteps.filter((s) => !s.passed).length,
+        endpointsCovered: [...endpointsSeen],
+      },
+      completedAt,
+    };
+
+    const tracePath = join(recordingDir, "api-trace.json");
+    await writeFile(tracePath, JSON.stringify(trace, null, 2), "utf8");
+
+    // ── Frame index (video ingestion for evaluators) ──────────────────────────
+    // V1 strategy: index the per-step screenshots already captured by the recorder.
+    // Evaluators call loadFrames(frameIndex) to base64-encode only the frames
+    // they need (typically key frames). No ffmpeg, no eager base64 in JSON.
+    const frameIndex: VideoFrameIndex = buildFrameIndex(spec.id, traceSteps, videoPath, screenshotPaths);
+    const frameIndexPath = join(recordingDir, "frame-index.json");
+    await writeFile(frameIndexPath, JSON.stringify(frameIndex, null, 2), "utf8");
+
+    // ── Recording manifest (human-readable summary) ───────────────────────────
+    const reviewSteps = demoLog.filter((s) => s.description !== "Prepare workspace");
+    const totalDurationMs = demoLog.reduce((sum, s) => sum + s.durationMs, 0);
+
+    const manifest: import("../types/index.js").RecordingManifest = {
+      runId: spec.id,
+      scenarioTitle: spec.goal,
+      serverStarted,
+      totalSteps: reviewSteps.length,
+      stepsPassed: reviewSteps.filter((s) => s.exitCode === 0).length,
+      stepsFailed: reviewSteps.filter((s) => s.exitCode !== 0).length,
+      totalDurationMs,
+      ...(videoPath ? { videoPath } : {}),
+      screenshotCount: screenshotPaths.length,
+      steps: reviewSteps.map((s) => ({
+        index: s.stepIndex,
+        description: s.description,
+        passed: s.exitCode === 0,
+        durationMs: s.durationMs,
+      })),
+      completedAt,
+    };
+
+    const manifestPath = join(recordingDir, "recording-manifest.json");
+    await writeFile(manifestPath, JSON.stringify(manifest, null, 2), "utf8");
+
+    // ── Demo log (full detail for debugging) ─────────────────────────────────
     const result: RecordingResult = {
       runId: spec.id,
       ...(videoPath ? { videoPath } : {}),
       screenshotPaths,
       demoLog,
-      completedAt: new Date().toISOString(),
+      manifestPath,
+      tracePath,
+      frameIndexPath,
+      completedAt,
     };
     await writeFile(
       join(recordingDir, "demo-log.json"),
@@ -496,17 +657,42 @@ function inferCrudOps(spec: RunSpec, existing: ApiOperation[]): ApiOperation[] {
   const resourcePath = findResourcePath(existing, spec);
   if (!resourcePath) return existing;
 
-  const singular = resourcePath.replace(/^\//, "").replace(/s$/, "");
-  const itemPath = `${resourcePath}/:id`;
+  const resourceName = resourcePath.replace(/^\//, "");         // e.g. "todos"
+  const singular     = resourceName.replace(/s$/, "");           // e.g. "todo"
+  const itemPath     = `${resourcePath}/:id`;
 
+  // Seven-step end-to-end scenario: create → read → update → verify → delete → verify
   const fullSet: ApiOperation[] = [
-    { method: "GET",    path: resourcePath },
-    { method: "POST",   path: resourcePath,
-      body: JSON.stringify({ title: `Test ${singular}`, completed: false }) },
-    { method: "GET",    path: itemPath },
-    { method: "PUT",    path: itemPath,
-      body: JSON.stringify({ title: `Updated ${singular}`, completed: true }) },
-    { method: "DELETE", path: itemPath },
+    {
+      method: "GET", path: resourcePath,
+      description: `List ${resourceName} (empty baseline)`,
+    },
+    {
+      method: "POST", path: resourcePath,
+      description: `Create ${singular}`,
+      body: JSON.stringify({ title: `Test ${singular}`, completed: false }),
+    },
+    {
+      method: "GET", path: itemPath,
+      description: `Read created ${singular}`,
+    },
+    {
+      method: "PUT", path: itemPath,
+      description: `Update ${singular}`,
+      body: JSON.stringify({ title: `Updated ${singular}`, completed: true }),
+    },
+    {
+      method: "GET", path: itemPath,
+      description: `Verify update persisted`,
+    },
+    {
+      method: "DELETE", path: itemPath,
+      description: `Delete ${singular}`,
+    },
+    {
+      method: "GET", path: resourcePath,
+      description: `Verify deletion — list ${resourceName}`,
+    },
   ];
 
   // Existing ops (parsed from criteria) override defaults for the same method+path

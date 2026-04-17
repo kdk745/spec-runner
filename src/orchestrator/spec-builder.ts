@@ -29,8 +29,8 @@ import { log } from "../logger.js";
 
 const DEFAULT_WORKER_CONFIG: WorkerConfig = {
   adapterName: "claude",
-  maxTokenBudget: 8_000,
-  timeoutMs: 120_000,
+  maxTokenBudget: 16_000,
+  timeoutMs: 300_000, // 5 minutes — multi-file React apps need 20+ turns
   options: {},
 };
 

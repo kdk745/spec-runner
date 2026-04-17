@@ -115,6 +115,11 @@ export async function resolveStartCommand(workspaceRoot: string): Promise<string
     }
   }
 
+  // 4. Bare index.html with no package.json — serve as a static site
+  if (existsSync(join(workspaceRoot, "index.html"))) {
+    return "npx --yes serve -l 3000 .";
+  }
+
   return null;
 }
 
