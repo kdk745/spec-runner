@@ -298,19 +298,28 @@ function formatPipelineResult(pr: PipelineResult): object {
 // ─── pipeline command ─────────────────────────────────────────────────────────
 
 async function cmdPipeline(prompt: string): Promise<void> {
-  const apiKey = process.env["ANTHROPIC_API_KEY"];
+  const apiKey   = process.env["ANTHROPIC_API_KEY"] ?? "";
+  const dockerEnv = process.env["DOCKER_ENV"] === "1";
+
+  // In Docker mode the build agents run claude-cli inside containers via ~/.claude
+  // and do not need ANTHROPIC_API_KEY. The key is still required for spec-builder,
+  // evaluators, and debater which run on the host.
   if (!apiKey) {
     logBanner([
       "ERROR: ANTHROPIC_API_KEY is not set.",
       "",
       "Export it before running:",
       "  export ANTHROPIC_API_KEY=sk-ant-...",
-    ]);
+      "",
+      dockerEnv
+        ? "Note: DOCKER_ENV=1 — build agents use ~/.claude in containers (no key needed)."
+        + "\n  ANTHROPIC_API_KEY is still required for spec-builder, evaluators, and debater."
+        : "",
+    ].filter(Boolean));
     process.exit(1);
   }
 
   const webhookUrl = process.env["SUBMIT_WEBHOOK_URL"];
-  const dockerEnv  = process.env["DOCKER_ENV"] === "1";
 
   logBanner([
     "SPEC RUNNER ARENA",

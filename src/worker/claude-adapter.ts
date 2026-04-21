@@ -19,10 +19,10 @@
  */
 
 import Anthropic from "@anthropic-ai/sdk";
-import { writeFile, mkdir } from "node:fs/promises";
+import { writeFile, mkdir, unlink } from "node:fs/promises";
 import { join, dirname } from "node:path";
-import type { WorkerAdapter } from "./adapter.js";
-import type { RunSpec, Workspace, BuildResult, Artifact, TokenUsage, RepairContext } from "../types/index.js";
+import type { WorkerAdapter, WorkerExecuteOptions } from "./adapter.js";
+import type { RunSpec, Workspace, BuildResult, Artifact, TokenUsage, RepairContext, ExecFn } from "../types/index.js";
 import { log } from "../logger.js";
 
 interface WriteFileInput {
@@ -69,12 +69,16 @@ export class ClaudeWorkerAdapter implements WorkerAdapter {
   private readonly model: string;
 
   constructor(apiKey: string, model = "claude-haiku-4-5-20251001") {
-    // maxRetries=5: SDK handles 429/5xx with exponential backoff automatically
-    this.client = new Anthropic({ apiKey, maxRetries: 5 });
+    // apiKey may be empty when DOCKER_ENV=1 — the SDK is only called in the
+    // non-Docker path; Docker builds use claude-cli inside the container.
+    this.client = new Anthropic({ apiKey: apiKey || "docker-mode-no-key", maxRetries: 5 });
     this.model = model;
   }
 
-  async execute(spec: RunSpec, workspace: Workspace, repairContext?: RepairContext): Promise<BuildResult> {
+  async execute(spec: RunSpec, workspace: Workspace, repairContext?: RepairContext, opts?: WorkerExecuteOptions): Promise<BuildResult> {
+    if (opts?.execFn) {
+      return this._executeInContainer(spec, workspace, opts.execFn, repairContext);
+    }
     const startedAt = Date.now();
     const writtenFiles: Array<{ path: string; sizeBytes: number }> = [];
     const timeoutMs = spec.workerConfig.timeoutMs;
@@ -251,7 +255,101 @@ export class ClaudeWorkerAdapter implements WorkerAdapter {
       };
     }
   }
-}
+
+  // ─── Container execution path (Docker mode) ────────────────────────────────
+  // Runs `claude -p` inside the container via execFn. The container authenticates
+  // through the ~/.claude bind-mount — no API key env var required.
+  // Claude is prompted to emit files as <file path="...">...</file> XML blocks
+  // which we parse on the host and write to the workspace.
+
+  private async _executeInContainer(
+    spec: RunSpec,
+    workspace: Workspace,
+    execFn: ExecFn,
+    repairContext?: RepairContext,
+  ): Promise<BuildResult> {
+    const startedAt = Date.now();
+    const phase = repairContext ? `repair attempt ${repairContext.attempt}` : "initial build";
+    log("build", `Starting ${phase} via docker claude-cli`);
+
+    const promptFile = "__spec-prompt__.txt";
+    const promptPath = join(workspace.rootPath, promptFile);
+    const prompt = repairContext
+      ? buildRepairPromptCli(spec, repairContext)
+      : buildUserPromptCli(spec);
+
+    await writeFile(promptPath, prompt, "utf8");
+
+    let output = "";
+    let errorMsg = "";
+    try {
+      const timeoutMs = spec.workerConfig.timeoutMs;
+      const result = await execFn(
+        `claude -p < /workspace/${promptFile}`,
+        "/workspace",
+        timeoutMs,
+      );
+      output = result.stdout;
+      if (result.timedOut) {
+        errorMsg = `claude -p timed out after ${timeoutMs / 1000}s`;
+      } else if (result.exitCode !== 0 && !output.trim()) {
+        errorMsg = `claude -p exited ${result.exitCode}: ${result.stderr.slice(0, 300)}`;
+      }
+    } catch (err) {
+      errorMsg = err instanceof Error ? err.message : String(err);
+    } finally {
+      await unlink(promptPath).catch(() => {});
+    }
+
+    if (errorMsg) {
+      log("build", `Container build failed: ${errorMsg}`);
+      return { success: false, artifacts: [], durationMs: Date.now() - startedAt, error: errorMsg };
+    }
+
+    // Parse <file path="...">...</file> blocks from stdout
+    const writtenFiles: Array<{ path: string; sizeBytes: number }> = [];
+    const fileRe = /<file path="([^"]+)">([\s\S]*?)<\/file>/g;
+    let match: RegExpExecArray | null;
+
+    while ((match = fileRe.exec(output)) !== null) {
+      const rawPath = match[1]!;
+      const content  = match[2]!.replace(/^\n/, "").replace(/\n$/, "");
+
+      let safePath: string;
+      try { safePath = sanitizePath(rawPath); } catch { continue; }
+
+      const absPath = join(workspace.rootPath, safePath);
+      await mkdir(dirname(absPath), { recursive: true });
+      await writeFile(absPath, content, "utf8");
+      const sizeBytes = Buffer.byteLength(content, "utf8");
+      writtenFiles.push({ path: safePath, sizeBytes });
+      log("build", `  wrote ${safePath} (${(sizeBytes / 1024).toFixed(1)} KB)`);
+    }
+
+    if (writtenFiles.length === 0) {
+      log("build", "Container build produced no parseable files");
+      log("build", `Raw output (first 500 chars): ${output.slice(0, 500)}`);
+      return {
+        success: false, artifacts: [],
+        durationMs: Date.now() - startedAt,
+        error: "claude -p returned no <file> blocks",
+      };
+    }
+
+    // Write build-manifest
+    const manifest = {
+      schemaVersion: "1", runId: spec.id, generatedBy: "claude-cli",
+      model: "claude-cli", filesWritten: writtenFiles.map((f) => f.path),
+      generatedAt: new Date().toISOString(),
+    };
+    const manifestContent = JSON.stringify(manifest, null, 2);
+    await writeFile(join(workspace.rootPath, "build-manifest.json"), manifestContent, "utf8");
+    writtenFiles.push({ path: "build-manifest.json", sizeBytes: Buffer.byteLength(manifestContent) });
+
+    log("build", `Container build done — ${writtenFiles.length} file(s) in ${Date.now() - startedAt}ms`);
+    return { success: true, artifacts: writtenFiles.map(toArtifact), durationMs: Date.now() - startedAt };
+  }
+} // end ClaudeWorkerAdapter
 
 // ─── Tool definition ──────────────────────────────────────────────────────────
 
@@ -362,6 +460,33 @@ function sanitizePath(raw: string): string {
 
 function toArtifact(f: { path: string; sizeBytes: number }): Artifact {
   return { path: f.path, kind: "file", sizeBytes: f.sizeBytes };
+}
+
+// ─── CLI prompt builders (Docker / no-API-key path) ───────────────────────────
+// Claude is instructed to emit every file as an XML block so the host can parse
+// and write them. No tool_use — output is parsed from stdout.
+
+const CLI_SYSTEM_SUFFIX = `
+Output EVERY file you create using this exact XML format (no other text):
+
+<file path="relative/path/to/file">
+file content here
+</file>
+
+Rules:
+- Use one <file> block per file
+- Paths must be relative (no leading slash, no ..)
+- Include ALL files needed to run the app
+- Include a README.md with a single run command`;
+
+function buildUserPromptCli(spec: RunSpec): string {
+  const lines: string[] = [SYSTEM_PROMPT, CLI_SYSTEM_SUFFIX, "", buildUserPrompt(spec)];
+  return lines.join("\n");
+}
+
+function buildRepairPromptCli(spec: RunSpec, ctx: RepairContext): string {
+  const lines: string[] = [SYSTEM_PROMPT, CLI_SYSTEM_SUFFIX, "", buildRepairPrompt(spec, ctx)];
+  return lines.join("\n");
 }
 
 // ─── Factory ──────────────────────────────────────────────────────────────────

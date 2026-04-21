@@ -12,7 +12,16 @@
  * Additional adapters (local shell, Docker sandbox) follow the same interface.
  */
 
-import type { RunSpec, Workspace, BuildResult, RepairContext } from "../types/index.js";
+import type { RunSpec, Workspace, BuildResult, RepairContext, ExecFn } from "../types/index.js";
+
+export interface WorkerExecuteOptions {
+  /**
+   * When provided (Docker mode), the adapter runs `claude -p` inside the
+   * container via execFn rather than calling the Anthropic SDK directly.
+   * The container authenticates via its ~/.claude bind-mount.
+   */
+  execFn?: ExecFn;
+}
 
 export interface WorkerAdapter {
   /** Unique stable identifier, matched against RunSpec.workerConfig.adapterName */
@@ -25,8 +34,10 @@ export interface WorkerAdapter {
    * When repairContext is provided the adapter is being asked to fix a prior
    * attempt. The workspace still contains the previous files — the adapter
    * should overwrite or add files to address the failed checks.
+   *
+   * When opts.execFn is provided the adapter runs inside a Docker container.
    */
-  execute(spec: RunSpec, workspace: Workspace, repairContext?: RepairContext): Promise<BuildResult>;
+  execute(spec: RunSpec, workspace: Workspace, repairContext?: RepairContext, opts?: WorkerExecuteOptions): Promise<BuildResult>;
 }
 
 // ─── Registry ────────────────────────────────────────────────────────────────

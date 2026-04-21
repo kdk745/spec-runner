@@ -159,7 +159,7 @@ export async function runCandidate(
     const adapter = workers.get(adapterName);
     const buildResult = await withTimeout(
       "build",
-      adapter.execute(spec, workspace),
+      adapter.execute(spec, workspace, undefined, execFn ? { execFn } : undefined),
       TIMEOUT_MS.BUILD,
     );
     log("arena", `${tag} build ${buildResult.success ? "succeeded" : "failed"} — ${buildResult.artifacts.length} artifact(s), ${buildResult.durationMs}ms`);
@@ -265,7 +265,7 @@ export async function runCandidate(
       const repairContext: RepairContext = { failedChecks, attempt: 1 };
       const repairBuild = await withTimeout(
         "repair.build",
-        adapter.execute(spec, workspace, repairContext),
+        adapter.execute(spec, workspace, repairContext, execFn ? { execFn } : undefined),
         TIMEOUT_MS.BUILD,
       );
       log("arena", `${tag} repair build ${repairBuild.success ? "succeeded" : "failed"} — ${repairBuild.artifacts.length} artifact(s)`);

@@ -19,6 +19,7 @@
 import { spawn } from "node:child_process";
 import { writeFile, readFile, mkdir } from "node:fs/promises";
 import { join } from "node:path";
+import { homedir } from "node:os";
 import { randomUUID } from "node:crypto";
 import * as net from "node:net";
 import type { EnvironmentManager, ExecFn, ServerSpawnFn } from "./index.js";
@@ -198,10 +199,15 @@ function dockerRun(opts: DockerRunOpts): Promise<string> {
   const labelArgs = Object.entries(opts.labels).flatMap(([k, v]) => ["--label", `${k}=${v}`]);
 
   return new Promise((resolve, reject) => {
+    // Mount ~/.claude read-only so the claude CLI inside the container can
+    // authenticate using the host's existing session (no API key env var needed)
+    const claudeHome = toDockerPath(join(homedir(), ".claude"));
+
     const child = spawn("docker", [
       "run", "-d",
       "--name",  opts.name,
       "-v",      `${toDockerPath(opts.workspacePath)}:${CONTAINER_WORKSPACE}`,
+      "-v",      `${claudeHome}:/root/.claude:ro`,
       "-p",      `${opts.hostPort}:${opts.containerPort}`,
       ...labelArgs,
       opts.image,

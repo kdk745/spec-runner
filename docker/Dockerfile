@@ -14,6 +14,10 @@ FROM mcr.microsoft.com/playwright:v1.49.0-noble
 # Install TypeScript tooling that candidate build steps commonly need
 RUN npm install -g typescript@5 ts-node nodemon
 
+# Install the Claude Code CLI — used by agents to generate implementations
+# Credentials are supplied at runtime via ~/.claude bind-mount (no API key needed)
+RUN npm install -g @anthropic-ai/claude-code
+
 # Default working directory — overridden at exec time with -w flag
 WORKDIR /workspace
 
