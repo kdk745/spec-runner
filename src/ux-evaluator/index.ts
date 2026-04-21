@@ -26,3 +26,4 @@ export interface UXEvaluator {
 export type { UXDebater } from "./debate.js";
 export { createClaudeUXEvaluator } from "./claude-evaluator.js";
 export { createClaudeUXDebater } from "./debate.js";
+export { createBuilderDebater } from "./builder-debate.js";

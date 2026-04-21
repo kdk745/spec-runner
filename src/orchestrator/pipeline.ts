@@ -55,6 +55,7 @@ export function createOrchestrator(config: OrchestratorConfig): Orchestrator {
 
     try {
       const candidateRecords: CandidateRecord[] = [];
+      const BASE_RECORDING_PORT = 3100; // well above 3000 to avoid collision with app servers
       const deps = {
         runsDir, events, candidates, workers, verifier, recorder, evaluator,
         ...(environmentManager ? { environmentManager } : {}),
@@ -75,9 +76,11 @@ export function createOrchestrator(config: OrchestratorConfig): Orchestrator {
               options: { ...spec.workerConfig.options, styleHint: CANDIDATE_STYLE_HINTS[i] },
             },
           };
+          // Each candidate gets a unique port so parallel python static servers don't collide
+          const candidateDeps = { ...deps, recordingPort: BASE_RECORDING_PORT + i };
           // Stagger starts by 3s to reduce simultaneous API burst / rate-limit risk
           return new Promise<Awaited<ReturnType<typeof runCandidate>>>((resolve, reject) => {
-            setTimeout(() => runCandidate(candidateSpec, deps).then(resolve, reject), i * 3000);
+            setTimeout(() => runCandidate(candidateSpec, candidateDeps).then(resolve, reject), i * 3000);
           });
         })
       );
@@ -107,13 +110,14 @@ export function createOrchestrator(config: OrchestratorConfig): Orchestrator {
 
       // ── UX evaluations ───────────────────────────────────────────────────────
       logStage("evaluate", `${candidateRecords.length} candidates`);
-      const uxInputs: CandidateUXInput[] = candidateRecords.map((cr) => {
+      const uxInputs: CandidateUXInput[] = candidateRecords.map((cr, i) => {
         const effectiveSelfVerification = cr.repairAttempt?.selfVerification ?? cr.selfVerification;
         return {
           candidateId: cr.candidateId,
           selfVerificationPassed: effectiveSelfVerification.passed,
           ...(cr.recording.tracePath      ? { tracePath: cr.recording.tracePath }           : {}),
           ...(cr.recording.frameIndexPath ? { frameIndexPath: cr.recording.frameIndexPath } : {}),
+          ...(CANDIDATE_STYLE_HINTS[i]    ? { styleHint: CANDIDATE_STYLE_HINTS[i] }         : {}),
         };
       });
 
@@ -142,7 +146,7 @@ export function createOrchestrator(config: OrchestratorConfig): Orchestrator {
         logStage("debate", "4-round structured transcript");
         await events.append({ runId: spec.id, kind: "ux.debate.started", payload: { rounds: 4 } });
         log("arena", `UX debate starting`);
-        uxDebate = await uxDebater.debate(spec, uxEvaluation, uxEvaluationB);
+        uxDebate = await uxDebater.debate(spec, uxEvaluation, uxEvaluationB, uxInputs);
         await writeFile(join(runsDir, spec.id, "ux-debate.json"), JSON.stringify(uxDebate, null, 2), "utf8");
         log("arena", `UX debate complete — final winner: ${uxDebate.finalWinner}`);
         await events.append({ runId: spec.id, kind: "ux.debate.completed", payload: { finalWinner: uxDebate.finalWinner, rounds: uxDebate.rounds.length } });

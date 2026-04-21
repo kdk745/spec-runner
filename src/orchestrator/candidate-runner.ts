@@ -87,6 +87,8 @@ export interface CandidateRunnerDeps {
   evaluator: Evaluator;
   /** Optional: when provided, each candidate gets a managed compute environment */
   environmentManager?: EnvironmentManager;
+  /** Port this candidate's recorder should bind the static server to (avoids collision when 3 run in parallel) */
+  recordingPort?: number;
 }
 
 export interface CandidateRunResult {
@@ -104,7 +106,7 @@ export async function runCandidate(
   spec: RunSpec,
   deps: CandidateRunnerDeps
 ): Promise<CandidateRunResult> {
-  const { events, candidates, workers, verifier, recorder, evaluator, runsDir, environmentManager } = deps;
+  const { events, candidates, workers, verifier, recorder, evaluator, runsDir, environmentManager, recordingPort } = deps;
   const adapterName = spec.workerConfig.adapterName;
 
   // 1. Create candidate + workspace on disk
@@ -343,7 +345,9 @@ export async function runCandidate(
       recorder.record(spec, workspace, script, {
         ...(execFn        ? { execFn }        : {}),
         ...(spawnServerFn ? { spawnServerFn } : {}),
-        ...(currentEnv?.hostPort !== undefined ? { overridePort: currentEnv.hostPort } : {}),
+        ...(currentEnv?.hostPort !== undefined
+          ? { overridePort: currentEnv.hostPort }
+          : recordingPort !== undefined ? { overridePort: recordingPort } : {}),
       }),
       TIMEOUT_MS.RECORD,
     );

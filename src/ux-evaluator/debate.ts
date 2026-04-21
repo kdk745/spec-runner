@@ -35,6 +35,7 @@ export interface UXDebater {
     spec: RunSpec,
     evalA: UXEvaluation,
     evalB: UXEvaluation,
+    inputs?: import("../types/index.js").CandidateUXInput[],
   ): Promise<UXDebateResult>;
 }
 

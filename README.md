@@ -72,8 +72,10 @@ Prompt
   │  using api-trace.json + key screenshots.
   │
   ▼  DEBATE
-  │  4-round structured transcript (A-open, B-open, A-rebut, B-rebut)
-  │  Single Claude call, tool_use-forced structured output.
+  │  3-phase builder debate: each builder defends its own implementation
+  │  Phase 1: parallel opening statements (builder persona + screenshots)
+  │  Phase 2: parallel rebuttals (each builder sees all openings)
+  │  Phase 3: judge verdict — single call reviews full transcript + evals
   │  Produces final winner + rationale grounded in evidence.
   │
   ▼  SUBMIT
@@ -96,19 +98,17 @@ By default every candidate runs as a child process on the host. Each candidate g
 
 **Practical implication:** local-process isolation is sufficient for well-behaved candidates that bind to a single port and don't write outside their workspace. It is not suitable for candidates that write to shared system paths or spawn background processes that outlive the kill signal.
 
+### Port isolation
+
+Each candidate recorder binds to a dedicated port (`BASE_RECORDING_PORT + i`, currently 3100/3101/3102) rather than competing for a single port. Before spawning each server, `freePort()` sends a kill signal to any process already holding that port — preventing stale servers from a previous run from satisfying `waitForPort()` before the new server is ready.
+
 ### Optional: Docker (DOCKER_ENV=1)
 
-Set `DOCKER_ENV=1` to run each candidate in an isolated container.
+The codebase includes a Docker manager (`src/environment/docker-manager.ts`) that provisions one container per candidate from a pre-built image (`spec-runner-env:latest`). Set `DOCKER_ENV=1` to enable it.
 
-```bash
-DOCKER_ENV=1 node dist/cli.js pipeline "..."
-```
+**Current status:** the Docker backend is implemented but not stable on all platforms (known issues with Docker Desktop's Linux engine on Windows). The default `local-process` mode is the tested path.
 
-The Docker manager provisions one container per candidate from a pre-built image (`spec-runner-env:latest`). It allocates a free host port, bind-mounts the workspace at `/workspace`, routes `npm install` / `tsc` / server start through `docker exec`, and maps Playwright's recording traffic from the host to the container port.
-
-**What Docker adds:** network namespace isolation, process tree isolation, no port collision between candidates. The container is removed in the `finally` block of candidate-runner (see Teardown section).
-
-**What Docker costs:** ~10–30 s provisioning overhead per candidate; requires a running Docker daemon; the image must be built once (`bash docker/build.sh`). Parallel container provisioning means all three start simultaneously, which can stress the Docker daemon on low-resource machines.
+**What Docker adds when working:** network namespace isolation, process tree isolation, no port collision between candidates.
 
 **The trade-off is explicit in config:**
 
@@ -118,8 +118,6 @@ export const DEFAULT_ENVIRONMENT_CONFIG: EnvironmentConfig = {
   isolationType: "local-process",
 };
 ```
-
-Switching to Docker changes one environment variable. The pipeline code is identical.
 
 ---
 
@@ -204,28 +202,36 @@ const settled = await Promise.allSettled(
 
 ## Self-verification and bounded repair
 
-After each build, the agent self-verifies using Playwright's `APIRequestContext` (HTTP only — no browser, no video). The endpoint list is derived from the same `buildScript(spec)` call the recorder uses, so the same operations are checked at both stages.
+After each build, the agent self-verifies its own output. The strategy is chosen based on what kind of criteria the spec contains:
+
+**Shell/static path (frontend apps, bare HTML):** if the spec has shell-command or static-file criteria and no HTTP endpoint criteria, no server is started. Checks run directly against the workspace:
+- `checkKind: "static"` — file existence check (paths extracted from backtick spans in the criterion description)
+- `checkKind: "runtime"` — shell command extracted from `run \`...\`` pattern, executed with a 30 s timeout via bash
+- Dev-server commands (`vite`, `webpack`, `react-scripts start`, commands ending with `&`) are auto-skipped as passed — the recorder handles server startup independently
+
+**HTTP path (REST APIs, servers):** uses Playwright's `APIRequestContext` (no browser, no video). The endpoint list is derived from the same `buildScript(spec)` call the recorder uses.
 
 ```
 Build completes
   │
   ▼
-selfVerify(): probe each CRUD endpoint
-  ├── all passed → continue to Record
-  └── any failed →
-        repairContext = { failedChecks, attempt: 1 }
-        adapter.execute(spec, workspace, repairContext)
-          │  Claude receives the original spec + list of failing endpoints + HTTP statuses
-          │  Writes only changed files (workspace still has previous artifacts)
-          ▼
-        selfVerify() again
-          ├── passed → continue to Record
-          └── still failed → write escalation.json, continue to Record anyway
+selfVerify(): choose path based on spec criteria
+  ├── shell/static → run commands, check file existence
+  └── HTTP → probe each CRUD endpoint
+        ├── all passed → continue to Record
+        └── any failed →
+              repairContext = { failedChecks, attempt: 1 }
+              adapter.execute(spec, workspace, repairContext)
+                │  Claude receives original spec + failing endpoints + HTTP statuses
+                ▼
+              selfVerify() again
+                ├── passed → continue to Record
+                └── still failed → write escalation.json, continue to Record anyway
 ```
 
-One repair cycle maximum (`MAX_REPAIR_ATTEMPTS = 1`). The escalation artifact is written to disk but does not abort the pipeline — a candidate with a failing self-verification still proceeds to recording and scoring. This is intentional: a partially working implementation may still produce useful signal for the evaluators.
+One repair cycle maximum (`MAX_REPAIR_ATTEMPTS = 1`). The escalation artifact is written to disk but does not abort the pipeline — a candidate with a failing self-verification still proceeds to recording and scoring. A partially working implementation may still produce useful signal for the evaluators.
 
-**What self-verification catches:** server won't start, missing routes (404 instead of 200), wrong method handling, total crashes. **What it does not catch:** incorrect response bodies, non-idempotent behavior, subtle schema errors. Those are caught by the evaluators using the api-trace.
+**What self-verification catches:** server won't start, missing routes (404 instead of 200), wrong method handling, total crashes, missing required files. **What it does not catch:** incorrect response bodies, non-idempotent behavior, subtle schema errors. Those are caught by the evaluators using the api-trace.
 
 **ID substitution is naive.** The self-verifier replaces `:id` / `{id}` in paths with the `id` / `_id` / `uuid` field from the last POST response. If a candidate uses a different field name (e.g. `todoId`), the substitution falls back to `/1`, which may not exist. This is a known limitation documented in the Rough Edges section.
 
@@ -250,6 +256,15 @@ Each step produces a screenshot with a semantic overlay (step N/7, endpoint, HTT
 `api-trace.json` stores the full response body (up to 4 KB) and HTTP status for each step. This is the primary evidence source for the evaluators — not the video.
 
 The video artifact (`.webm`) is captured via Playwright's built-in video recording. It exists as a human-inspectable artifact for the submission reviewer but is not fed directly into the LLM evaluation (see next section).
+
+**Server start for bare HTML candidates:** if a candidate produces only a bare `index.html` with no `package.json` or entry-point JS file, the recorder starts an inline Node.js static file server (no external dependencies, no download required):
+
+```
+node -e "const h=require('http'),fs=require('fs'),p=require('path');
+h.createServer((q,s)=>{...}).listen(<port>)"
+```
+
+This runs cross-platform (Node is always available) and serves with correct MIME types for HTML, CSS, JS, SVG, and PNG. Each candidate gets a dedicated port (3100/3101/3102) to avoid collision during parallel recording.
 
 ---
 
@@ -291,29 +306,35 @@ A single evaluator produces one perspective. The correctness evaluator will acce
 | A | API correctness + CRUD completeness | Status codes, missing operations, error handling, end-to-end flow |
 | B | Response quality + UX consistency | Body structure, create→read agreement, behavioral surprises |
 
-### Debate format
+### Debate format — builder debate
 
-After both independent evaluations, one Claude call generates a 4-round transcript. The format and turn count are fixed before the call; the model cannot extend the debate.
+After both independent evaluations, the builders themselves defend their own implementations in a 3-phase structured debate (`src/ux-evaluator/builder-debate.ts`):
 
 ```
-Round 1 — Evaluator A opening
-Round 2 — Evaluator B opening
-Round 3 — Evaluator A rebuttal
-Round 4 — Evaluator B rebuttal
-→ consensusPoints, disputedPoints, finalWinner, finalRationale
+Phase 1 — Opening statements (parallel)
+  Each builder receives:
+    - Its own candidate's screenshots and api-trace
+    - Both evaluators' summaries of all three candidates
+    - A style persona hint (e.g. "pragmatic minimalist", "defensive engineer")
+  Each builder argues why its implementation is the strongest.
+
+Phase 2 — Rebuttals (parallel)
+  Each builder sees all three opening statements and responds:
+    - Concede weak points, challenge the strongest rival
+    - Claims must reference specific steps/screenshots
+
+Phase 3 — Judge verdict (single call)
+  A neutral judge reviews:
+    - The full Phase 1 + Phase 2 transcript
+    - Both evaluators' structured scores
+  Produces: finalWinner, finalRationale, consensusPoints, disputedPoints
 ```
 
-Output is forced via `tool_choice: { type: "tool", name: "submit_debate_result" }`. Each round requires `evidenceRefs` (specific step/endpoint/status/excerpt) and `concessions` (points granted to the other side) — these are required fields in the schema, not optional. A round without evidence is structurally invalid.
+**Why builders instead of evaluator personas:** evaluator personas restate their own scoring lens. Builders have asymmetric information (they know their own implementation decisions) and asymmetric incentives (they want to win), which produces more specific and contestable claims.
 
-**Why not freeform multi-turn:** without structural constraints the model restates its opening position at increasing length. The `evidenceRefs` requirement keeps every claim anchored to an observable artifact moment.
+**Why a judge in Phase 3:** unconstrained builder debate converges to mutual flattery or deadlock. The judge has no stake in the outcome and can weigh the transcript against the objective evaluation scores.
 
-**Why not a single supervisor:** suppresses disagreements that are the actual signal. When A and B rank differently, the debate resolves it explicitly.
-
-**Why not more rounds:** four is the minimum for open + rebut per side. Additional rounds in practice add repetition, not new signal. Cost is proportional to rounds; four keeps it bounded.
-
-**When evaluators agree:** the prompt switches to stress-test mode — challenge the consensus, find what evidence would change it. This prevents rubber-stamp confirmation of an obvious winner.
-
-**Cost:** 3 additional Claude API calls per run (Evaluate A, Evaluate B — both multimodal up to 15 images; Debate — text only). Evaluations run sequentially, not in parallel, because the debate requires both to complete first.
+**Cost:** 5 Claude API calls per run — Evaluate A, Evaluate B (multimodal, up to 15 images each), 3× builder opening (parallel), 3× builder rebuttal (parallel), 1× judge verdict. Evaluations must complete before debate starts; debate phases 1 and 2 run in parallel within each phase.
 
 ---
 
@@ -461,9 +482,9 @@ These are real limitations, not future-work hand-waving.
 
 **Submission payload contains absolute paths.** `workspacePath`, `videoPath`, and `payloadPath` are absolute local paths. The payload is not portable to another machine without path rewriting.
 
-**Docker backend requires manual image build.** `spec-runner-env:latest` must be built before `DOCKER_ENV=1` works. There is no automatic pull or build trigger.
+**Docker backend is not stable on Windows.** The `DOCKER_ENV=1` path requires Docker Desktop with a Linux engine. Known issues with Docker Desktop's Linux engine on Windows (specifically with `docker exec` routing and port mapping) make this unreliable. The `local-process` default is the tested path; Docker remains in the codebase as a future option.
 
-**`finally` does not run on SIGKILL.** If the host OOM-kills the Node process, Docker containers will not be released. Run `docker ps -a | grep spec-runner` to find and remove leaked containers.
+**Shell commands in self-verifier require bash.** `execAsync` forces `shell: "bash"` so that grep patterns, pipes, and Unix-style flags work correctly on Windows (via Git Bash). If bash is not on `PATH`, runtime shell criteria will fail. This is a Windows-specific constraint.
 
 **Evaluations run sequentially, not in parallel.** Evaluate A and Evaluate B are sequential Claude calls. They could run concurrently (`Promise.all`) to save ~10–20 s per run. Not implemented.
 
@@ -482,7 +503,7 @@ runs/
     ├── result.json                ← full PipelineResult
     ├── ux-evaluation.json         ← Evaluator A (correctness lens)
     ├── ux-evaluation-b.json       ← Evaluator B (quality lens)
-    ├── ux-debate.json             ← 4-round transcript + final winner
+    ├── ux-debate.json             ← builder debate transcript + final winner
     ├── submission.json            ← SubmissionPayload (always written)
     └── candidates/
         └── <candidateId>/

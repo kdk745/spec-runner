@@ -27,7 +27,7 @@ import {
 import { createVerifier } from "./verifier/index.js";
 import { createRecorder } from "./recorder/index.js";
 import { createEvaluator } from "./evaluator/index.js";
-import { createClaudeUXEvaluator, createClaudeUXDebater } from "./ux-evaluator/index.js";
+import { createClaudeUXEvaluator, createBuilderDebater } from "./ux-evaluator/index.js";
 import { createStubSubmitter, createWebhookSubmitter } from "./submitter/index.js";
 import { createDockerEnvironmentManager } from "./environment/docker-manager.js";
 import type { RunRecord, RunSpec, PipelineResult } from "./types/index.js";
@@ -110,7 +110,7 @@ function buildOrchestrator(adapterName: string) {
 
   const uxEvaluator  = apiKey ? createClaudeUXEvaluator(apiKey, "correctness") : undefined;
   const uxEvaluatorB = apiKey ? createClaudeUXEvaluator(apiKey, "quality")     : undefined;
-  const uxDebater    = apiKey ? createClaudeUXDebater(apiKey)                  : undefined;
+  const uxDebater    = apiKey ? createBuilderDebater(apiKey)                  : undefined;
   const webhookUrl   = process.env["SUBMIT_WEBHOOK_URL"];
   const submitter    = webhookUrl
     ? createWebhookSubmitter(RUNS_DIR, { url: webhookUrl })
@@ -345,7 +345,7 @@ async function cmdPipeline(prompt: string): Promise<void> {
     specBuilder,
     uxEvaluator:  createClaudeUXEvaluator(apiKey, "correctness"),
     uxEvaluatorB: createClaudeUXEvaluator(apiKey, "quality"),
-    uxDebater:    createClaudeUXDebater(apiKey),
+    uxDebater:    createBuilderDebater(apiKey),
     submitter:    webhookUrl
       ? createWebhookSubmitter(RUNS_DIR, { url: webhookUrl })
       : createStubSubmitter(RUNS_DIR),

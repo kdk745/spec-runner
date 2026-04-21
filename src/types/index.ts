@@ -610,6 +610,8 @@ export interface CandidateUXInput {
   tracePath?: string;
   /** Whether the candidate passed Playwright self-verification */
   selfVerificationPassed: boolean;
+  /** Design philosophy injected into this candidate's build prompt (used by builder debate) */
+  styleHint?: string;
 }
 
 /**
@@ -652,8 +654,8 @@ export interface UXEvaluation {
 
 /** One turn in the bounded UX evaluation debate. */
 export interface DebateRound {
-  /** Which evaluator is speaking: A = correctness-focused, B = quality-focused */
-  evaluatorId: "A" | "B";
+  /** Speaker ID — "A"/"B" for judge evaluators, "builder-N" for builder agents */
+  evaluatorId: string;
   /** 1-based round index */
   roundIndex: number;
   /** The evaluator's argument this turn */

@@ -26,6 +26,7 @@ import {
   spawnServer,
   waitForPort,
   extractPortFromText,
+  freePort,
 } from "./server.js";
 import { log } from "../logger.js";
 import type {
@@ -39,7 +40,7 @@ import type {
   VideoFrameIndex,
 } from "../types/index.js";
 
-const SERVER_WAIT_MS = 15_000;
+const SERVER_WAIT_MS = 30_000;
 const VIDEO_SIZE = { width: 1280, height: 720 };
 
 // ─── API operation extracted from a criterion description ─────────────────────
@@ -168,7 +169,7 @@ export class DefaultRecorder implements Recorder {
     }
 
     // ── Find + start server ──────────────────────────────────────────────────
-    const startCmd = await resolveStartCommand(workspace.rootPath);
+    const startCmd = await resolveStartCommand(workspace.rootPath, opts?.overridePort ?? 3000);
     const shellStep = logStep(stepIndex++, "Start app server", startCmd ?? "(no runnable entry point)");
 
     if (!startCmd) {
@@ -183,6 +184,9 @@ export class DefaultRecorder implements Recorder {
     log("record", `Starting server${opts?.spawnServerFn ? " (docker exec)" : ""}: ${startCmd}`);
     const preferPort = opts?.overridePort
       ?? extractPortFromText(spec.successCriteria.map((c) => c.description).join(" "));
+    // Kill any leftover process on this port from a previous run so waitForPort()
+    // doesn't latch onto a stale server serving a different workspace.
+    if (preferPort) await freePort(preferPort);
     const spawnFn = opts?.spawnServerFn ?? spawnServer;
     const serverHandle = spawnFn(startCmd, workspace.rootPath);
     const started = Date.now();
@@ -333,10 +337,16 @@ export class DefaultRecorder implements Recorder {
               );
               if (input) {
                 input.focus();
-                input.value = "";
-                input.dispatchEvent(new Event("input", { bubbles: true }));
-                input.value = text;
-                input.dispatchEvent(new Event("input", { bubbles: true }));
+                // Use native value setter so React's synthetic event system sees the change
+                const nativeSetter = Object.getOwnPropertyDescriptor(
+                  window.HTMLInputElement.prototype, "value"
+                )?.set;
+                if (nativeSetter) {
+                  nativeSetter.call(input, text);
+                } else {
+                  input.value = text;
+                }
+                input.dispatchEvent(new Event("input",  { bubbles: true }));
                 input.dispatchEvent(new Event("change", { bubbles: true }));
               }
             }, step.command);

@@ -92,7 +92,7 @@ const ENTRY_POINT_COMMANDS: Array<{ file: string; cmd: string }> = [
   { file: "dist/app.js",     cmd: "node dist/app.js" },
 ];
 
-export async function resolveStartCommand(workspaceRoot: string): Promise<string | null> {
+export async function resolveStartCommand(workspaceRoot: string, port = 3000): Promise<string | null> {
   // 1. Try README.md code blocks
   const readme = await extractReadmeCommand(workspaceRoot);
   if (readme) return readme;
@@ -115,9 +115,22 @@ export async function resolveStartCommand(workspaceRoot: string): Promise<string
     }
   }
 
-  // 4. Bare index.html with no package.json — serve as a static site
+  // 4. Bare index.html with no package.json — serve as a static site.
+  // Use an inline Node.js static server: Node is always available, starts instantly,
+  // works cross-platform (no python, no npx download required).
   if (existsSync(join(workspaceRoot, "index.html"))) {
-    return "npx --yes serve -l 3000 .";
+    return (
+      `node -e "const h=require('http'),fs=require('fs'),p=require('path');` +
+      `h.createServer((q,s)=>{` +
+        `let f=p.join('.',q.url==='/'?'index.html':q.url.split('?')[0]);` +
+        `fs.readFile(f,(e,d)=>{` +
+          `if(e){s.writeHead(404);s.end('not found')}` +
+          `else{const m={html:'text/html',css:'text/css',js:'text/javascript',svg:'image/svg+xml',png:'image/png'};` +
+          `const ext=p.extname(f).slice(1);` +
+          `s.writeHead(200,{'Content-Type':m[ext]||'text/plain'});s.end(d)}` +
+        `})` +
+      `}).listen(${port})"`
+    );
   }
 
   return null;
@@ -143,6 +156,28 @@ async function extractReadmeCommand(workspaceRoot: string): Promise<string | nul
     // ignore
   }
   return null;
+}
+
+// ─── Port cleanup ─────────────────────────────────────────────────────────────
+
+/**
+ * Kill any process currently listening on the given port so that our server
+ * can bind to it cleanly. Leftover processes from previous pipeline runs would
+ * otherwise satisfy waitForPort() before our server is ready, causing the
+ * recorder to screenshot a stale workspace.
+ */
+export async function freePort(port: number): Promise<void> {
+  return new Promise((resolve) => {
+    // Windows: netstat + taskkill; Unix: fuser/lsof
+    const isWin = process.platform === "win32";
+    const cmd = isWin
+      ? `FOR /F "tokens=5" %p IN ('netstat -ano ^| findstr :${port} ^| findstr LISTENING') DO taskkill /F /PID %p`
+      : `fuser -k ${port}/tcp 2>/dev/null || lsof -t -i:${port} | xargs kill -9 2>/dev/null`;
+    const child = spawn(cmd, { shell: true });
+    child.on("close", () => resolve());
+    child.on("error", () => resolve()); // non-fatal
+    setTimeout(resolve, 2000); // safety timeout
+  });
 }
 
 // ─── Server spawn ─────────────────────────────────────────────────────────────

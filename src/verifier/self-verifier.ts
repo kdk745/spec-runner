@@ -238,19 +238,31 @@ async function runShellCriteria(
       const cmdMatch = criterion.description.match(/run\s+`([^`]+)`/i);
       if (cmdMatch) {
         const cmd = cmdMatch[1]!;
-        log("self-verify", `  > running: ${cmd}`);
-        try {
-          const result = await execAsync(cmd, { cwd: workspaceRoot, timeout: 30_000 });
-          const output = (result.stdout + result.stderr).trim();
+
+        // Dev-server commands never exit — skip them here; the recorder handles
+        // server startup independently. Mark as passed so they don't block the run.
+        const isDevServer = /\b(vite|webpack(?:-dev-server)?|react-scripts\s+start|npm\s+run\s+dev)\b/.test(cmd)
+          || cmd.trimEnd().endsWith("&");
+        if (isDevServer) {
           passed = true;
-          reason = `Exit 0: ${output.slice(0, 200)}`;
-          log("self-verify", `  < exit 0`);
-        } catch (err: unknown) {
-          const e = err as { code?: number; stdout?: string; stderr?: string; message?: string };
-          const output = ((e.stdout ?? "") + (e.stderr ?? "")).trim();
-          passed = false;
-          reason = `Command exited ${e.code ?? 1}: ${cmd} | stdout: ${output.slice(0, 200)}`;
-          log("self-verify", `  < exit ${e.code ?? 1}`);
+          reason = "Dev server command skipped — recorder handles server startup";
+          log("self-verify", `  ~ [skip] ${cmd.slice(0, 80)} (dev server)`);
+        } else {
+          log("self-verify", `  > running: ${cmd}`);
+          try {
+            // Force bash so Unix-style patterns (grep -E, pipes, etc.) work on Windows
+            const result = await execAsync(cmd, { cwd: workspaceRoot, timeout: 30_000, shell: "bash" });
+            const output = (result.stdout + result.stderr).trim();
+            passed = true;
+            reason = `Exit 0: ${output.slice(0, 200)}`;
+            log("self-verify", `  < exit 0`);
+          } catch (err: unknown) {
+            const e = err as { code?: number; stdout?: string; stderr?: string; message?: string };
+            const output = ((e.stdout ?? "") + (e.stderr ?? "")).trim();
+            passed = false;
+            reason = `Command exited ${e.code ?? 1}: ${cmd} | stdout: ${output.slice(0, 200)}`;
+            log("self-verify", `  < exit ${e.code ?? 1}`);
+          }
         }
       } else {
         // No extractable command — mark as skipped (not a failure)
