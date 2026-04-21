@@ -88,34 +88,144 @@ Prompt
 
 ## Infrastructure and isolation model
 
-### Default: local-process
+### The choice: Docker containers (one per candidate)
 
-By default every candidate runs as a child process on the host. Each candidate gets its own directory (`runs/<runId>/candidates/<id>/workspace/`) and its own server process (killed after recording). There is no container boundary.
+Each candidate runs inside a dedicated Docker container, provisioned on demand, torn down after the pipeline completes. The choice is `DOCKER_ENV=1` in `.env`; the `local-process` fallback exists for environments without Docker Desktop.
 
-**What is isolated:** filesystem (separate workspace directories), server process (spawned and killed per stage), Node.js working directory.
+**Why containers for a take-home:**
 
-**What is not isolated:** host port space, Node modules cache, host network, host file descriptors. Three candidates run in parallel; all three servers start simultaneously and compete for ports. Port selection uses `waitForPort` polling with a preferred-port hint from the spec, but a race condition is possible if two candidates happen to select the same port before either binds.
+Running three independent Claude agents against the same spec on a shared host produces interference that contaminates results: port collisions, stale processes from previous runs, Node module cache poisoning between candidates, and leftover background servers that `waitForPort()` mistakenly treats as ready. Containers eliminate the entire class. Each one has its own network namespace, its own process tree, and its own view of the filesystem.
 
-**Practical implication:** local-process isolation is sufficient for well-behaved candidates that bind to a single port and don't write outside their workspace. It is not suitable for candidates that write to shared system paths or spawn background processes that outlive the kill signal.
+Containers are also the right level of abstraction for where this problem is going. The `EnvironmentManager` interface (`src/environment/index.ts`) is backend-agnostic. The Docker implementation is ~400 lines. A Firecracker implementation would swap in behind the same interface without touching the orchestrator, the verifier, or the recorder.
 
-### Port isolation
+---
 
-Each candidate recorder binds to a dedicated port (`BASE_RECORDING_PORT + i`, currently 3100/3101/3102) rather than competing for a single port. Before spawning each server, `freePort()` sends a kill signal to any process already holding that port — preventing stale servers from a previous run from satisfying `waitForPort()` before the new server is ready.
+### Why not the alternatives
 
-### Optional: Docker (DOCKER_ENV=1)
+The alternatives below were evaluated against four constraints: cold-start time must fit inside the existing build timeout budget, teardown must be synchronous and reliable (no dangling charges), implementation complexity must be completeable in the time available, and the isolation guarantee must be meaningful relative to the risk.
 
-The codebase includes a Docker manager (`src/environment/docker-manager.ts`) that provisions one container per candidate from a pre-built image (`spec-runner-env:latest`). Set `DOCKER_ENV=1` to enable it.
+| Option | Cold start | Isolation | Teardown | Cost | Why rejected |
+|--------|-----------|-----------|----------|------|--------------|
+| **Docker containers** | 2–5 s | Network ns, pid ns, filesystem | `docker stop` + `docker rm`, synchronous | Zero (runs locally) | **Chosen** |
+| EC2 instances | 60–120 s | Full VM, separate kernel | `TerminateInstances`, async, charges until confirmed | ~$0.005/run at t3.micro | Cold start blows the build timeout; async teardown means leaked instances on crashes |
+| Kubernetes pods | 10–30 s (scheduler + kubelet) | Container (not VM) | `kubectl delete pod`, eventually consistent | Cluster overhead dominates | Scheduler adds non-deterministic latency; local k8s (minikube/kind) adds Docker-on-Docker complexity with no isolation benefit |
+| ECS tasks | 30–90 s (task placement + ENI attach) | Container + Fargate VPC isolation | `StopTask`, async, ENI lingers | ~$0.01/run at minimum | Same cost concern as EC2, worse latency, adds AWS API surface |
+| Firecracker microVMs | 125–150 ms (with pre-warmed snapshots) | Separate kernel, minimal attack surface | `DELETE /machine-config`, synchronous | Requires Linux host + KVM | Best isolation-per-ms story but requires a Linux KVM host; not available on Docker Desktop for Mac/Windows. Correct choice for a production multi-tenant runner |
 
-**Current status:** the Docker backend is implemented but not stable on all platforms (known issues with Docker Desktop's Linux engine on Windows). The default `local-process` mode is the tested path.
+**The EC2/ECS argument in more detail:** the strongest case for EC2 is true kernel isolation — a rogue agent can't escape the container by exploiting a kernel bug. That argument is real. But the cold start penalty (60–120 s) consumes ~25% of the entire build timeout, introduces async teardown races that require a separate reconciliation loop to handle crashes, and adds per-run cost that accumulates across evaluation cycles. For a take-home with 3 candidates per run and no production SLA, containers give 80% of the isolation benefit with none of the latency or cost overhead.
 
-**What Docker adds when working:** network namespace isolation, process tree isolation, no port collision between candidates.
+**The Firecracker argument:** Firecracker is the correct production choice for a multi-tenant code-execution service. Sub-150 ms cold starts (with pre-warmed snapshots), separate kernels, no container escape surface. The `EnvironmentManager` interface was designed with Firecracker in mind — `provision/activate/release` maps cleanly to `CreateMachine/StartMachine/StopMachine`. The blocker is KVM availability: Firecracker requires a bare-metal or KVM-enabled Linux host. Docker Desktop on Mac and Windows presents a Linux VM to Docker but does not expose `/dev/kvm`. On a Linux CI worker or a bare-metal machine, the Firecracker backend would be a drop-in.
+
+---
+
+### How environments are provisioned, tagged, tracked, and torn down
+
+**Provisioning** (`DockerEnvironmentManager.provision()`):
+
+```
+1. Generate environment UUID, create workspace directory
+   runs/<runId>/candidates/<candidateId>/workspace/
+2. Allocate a free host port via OS-assigned socket (net.createServer → address().port)
+3. docker run -d
+     --name spec-runner-<envId[0:8]>
+     -v <workspacePath>:/workspace          # candidate's build artifacts
+     -v ~/.claude:/root/.claude:ro          # agent auth (claude CLI credentials)
+     -p <hostPort>:3000                     # server traffic routed out
+     --label spec-runner=1
+     --label spec-runner.run-id=<runId>
+     --label spec-runner.candidate-id=<candidateId>
+     --label spec-runner.env-id=<envId>
+     spec-runner-env:latest
+4. Container starts with default CMD (sleep infinity) — waits for work
+5. Persist environment.json + .env-index/<envId>.json
+   Status transitions: provisioning → ready
+```
+
+**Execution routing** — instead of changing the call sites (adapter, verifier, recorder), all container-specific routing is encapsulated in two function types:
+
+- `ExecFn(command, cwd, timeoutMs)` — wraps `docker exec -w <cwd> <containerId> sh -c <command>`, resolves to `{ exitCode, stdout, stderr, timedOut }`. Passed into the worker adapter, verifier, and recorder so they run commands inside the container without knowing a container exists.
+- `ServerSpawnFn(command, cwd)` — starts a background process inside the container via `docker exec ... sh -c "(command) > /tmp/server.log 2>&1 & echo $!"`. Returns a handle with `.port` (the mapped host port) and `.kill()`. The recorder probes `http://localhost:<hostPort>/` not `localhost:3000` — crossing the Docker port mapping transparently.
+
+**Tagging** — every container carries four labels:
+
+```
+spec-runner=1                              filter: docker ps -f label=spec-runner=1
+spec-runner.run-id=<uuid>                  correlate container → run
+spec-runner.candidate-id=<uuid>            correlate container → candidate
+spec-runner.env-id=<uuid>                  correlate container → environment.json on disk
+```
+
+Labels survive container restarts and are queryable with `docker ps` or `docker inspect` independently of the on-disk `environment.json`. If the process crashes and environment files are lost, `docker ps --filter label=spec-runner.run-id=<runId>` still finds the containers for manual cleanup.
+
+**Tracking** — each environment is persisted in two places:
+
+1. `runs/<runId>/candidates/<candidateId>/environment.json` — primary record (runId, candidateId, containerId, hostPort, status, timestamps)
+2. `runs/.env-index/<envId>.json` — lookup index for `get(environmentId)` without knowing the candidateId
+
+Live status is readable at any time via `docker inspect`:
+
+```bash
+node dist/cli.js env <runId>
+```
+
+Output:
+```
+Docker environments for run abc12345:
+
+ENV       CANDIDATE  STATUS      CONTAINER  RUNNING  PORT   UPTIME
+────────  ─────────  ──────────  ─────────  ───────  ─────  ──────
+f3a1b2c4  91e8d7a2   running     running    yes      49231  42s
+8b7c6d5e  3f2e1d0c   running     running    yes      51847  41s
+2a9b8c7d  c4b3a2f1   running     running    yes      53124  40s
+```
+
+**Teardown** (`DockerEnvironmentManager.release()`):
+
+```
+1. Mark status: teardown_requested, persist
+2. docker stop --time 5 <containerId>   (SIGTERM → 5 s grace → SIGKILL)
+3. docker rm -f <containerId>           (remove even if still running)
+4. Mark status: terminated, record terminatedAt + elapsed ms
+```
+
+Teardown is always called from `safeRelease()` inside the `finally` block of `candidate-runner.ts`. Errors from `release()` are caught and logged but never propagated — cleanup failure does not mask the stage failure that caused it. If the Node process is SIGKILL'd before `finally` runs, the containers leak; recovery is `docker ps --filter label=spec-runner=1` followed by `docker rm -f`.
+
+---
+
+### Production evolution
+
+The `EnvironmentManager` interface was written to make the next step explicit, not hypothetical:
+
+| What changes | What stays the same |
+|---|---|
+| `DockerEnvironmentManager` → `FirecrackerEnvironmentManager` | `EnvironmentManager` interface |
+| `/dev/kvm` + Firecracker binary | `ExecFn` / `ServerSpawnFn` types |
+| `CreateMachine` / `StartMachine` / `StopMachine` calls | `candidate-runner.ts` lifecycle hooks |
+| Separate kernel per candidate | All stage implementations (verifier, recorder, evaluator) |
+
+The two things that would not survive a production transition: the `~/.claude` bind-mount (replace with a secrets manager injection or per-container credential provisioning), and the single-host port mapping (replace with a container-native service mesh or internal DNS). Both are clearly contained in `docker-manager.ts` and the image's `CMD`.
+
+### Standalone infra demo
+
+To exercise the provisioning/status/teardown cycle without running a full pipeline:
+
+```bash
+bash docker/build.sh        # build spec-runner-env:latest (once)
+bash docker/run-local.sh    # provision 3 containers, show status table, tear down
+```
+
+The script provisions containers with correct labels, uses the same `docker run` flags as the pipeline, and tears them down via `docker stop` + `docker rm` with a `trap EXIT` guarantee.
 
 **The trade-off is explicit in config:**
 
 ```typescript
 // src/environment/index.ts
 export const DEFAULT_ENVIRONMENT_CONFIG: EnvironmentConfig = {
-  isolationType: "local-process",
+  isolationType: "local-process",  // fallback: no container boundary
+};
+
+export const DOCKER_ENVIRONMENT_CONFIG: EnvironmentConfig = {
+  isolationType: "docker",         // DOCKER_ENV=1: one container per candidate
 };
 ```
 
@@ -482,7 +592,7 @@ These are real limitations, not future-work hand-waving.
 
 **Submission payload contains absolute paths.** `workspacePath`, `videoPath`, and `payloadPath` are absolute local paths. The payload is not portable to another machine without path rewriting.
 
-**Docker backend is not stable on Windows.** The `DOCKER_ENV=1` path requires Docker Desktop with a Linux engine. Known issues with Docker Desktop's Linux engine on Windows (specifically with `docker exec` routing and port mapping) make this unreliable. The `local-process` default is the tested path; Docker remains in the codebase as a future option.
+**Docker requires Docker Desktop with Linux engine.** `DOCKER_ENV=1` mounts the candidate workspace via `-v` and routes commands through `docker exec`. On Windows, bind-mount paths are converted from backslash to forward-slash before passing to the Docker CLI. If Docker Desktop is not running or the Linux engine is not active, `provision()` will fail fast and surface the error in `events.jsonl`. The `local-process` default requires no Docker dependency and is the path to use if Docker is unavailable.
 
 **Shell commands in self-verifier require bash.** `execAsync` forces `shell: "bash"` so that grep patterns, pipes, and Unix-style flags work correctly on Windows (via Git Bash). If bash is not on `PATH`, runtime shell criteria will fail. This is a Windows-specific constraint.
 
@@ -541,7 +651,7 @@ src/
     index.ts                     OrchestratorConfig interface
   environment/
     index.ts                     EnvironmentManager interface + DEFAULT_ENVIRONMENT_CONFIG
-    docker-manager.ts            Docker backend (provision/activate/release)
+    docker-manager.ts            Docker backend: provision/activate/release/inspect/listForRun, ExecFn + ServerSpawnFn routing
   workspace/                     filesystem workspace allocation
   candidate/                     candidate record persistence (fs-manager)
   worker/
