@@ -5,3 +5,6 @@ runs/*/
 *.env
 .env
 conversation-history.md
+graphify-out/
+src/graphify-out/
+.claude/settings.local.json
