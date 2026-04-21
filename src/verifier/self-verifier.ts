@@ -72,6 +72,23 @@ export async function selfVerify(
   const script = createRecorder().buildScript(spec);
   const apiSteps = script.steps.filter((s) => s.kind === "browser-api-call");
 
+  // ── Workspace preparation (Docker mode: run inside container) ─────────────
+  // In local-process mode prepareWorkspace is called by the recorder; in Docker
+  // mode the self-verifier starts the server first so we must install deps here.
+  if (opts?.execFn) {
+    log("self-verify", `[${spec.id.slice(0, 8)}] Preparing workspace via docker exec...`);
+    const hasPkg = (await opts.execFn("test -f package.json", undefined, 5_000)).exitCode === 0;
+    if (hasPkg) {
+      const install = await opts.execFn("npm install --prefer-offline 2>&1", undefined, 120_000);
+      log("self-verify", `[${spec.id.slice(0, 8)}] npm install → exit ${install.exitCode}`);
+      const hasTsc = (await opts.execFn("test -f tsconfig.json", undefined, 5_000)).exitCode === 0;
+      if (hasTsc) {
+        const build = await opts.execFn("npx tsc 2>&1", undefined, 60_000);
+        log("self-verify", `[${spec.id.slice(0, 8)}] npx tsc → exit ${build.exitCode}`);
+      }
+    }
+  }
+
   // ── Server start ──────────────────────────────────────────────────────────
 
   const startCmd = await resolveStartCommand(workspace.rootPath);

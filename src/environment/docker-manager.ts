@@ -188,6 +188,12 @@ interface DockerRunOpts {
   labels:        Record<string, string>;
 }
 
+// Docker on Windows requires forward slashes in bind-mount paths.
+// Node's path.join() uses backslashes on Windows; convert before passing to CLI.
+function toDockerPath(p: string): string {
+  return p.replace(/\\/g, "/");
+}
+
 function dockerRun(opts: DockerRunOpts): Promise<string> {
   const labelArgs = Object.entries(opts.labels).flatMap(([k, v]) => ["--label", `${k}=${v}`]);
 
@@ -195,7 +201,7 @@ function dockerRun(opts: DockerRunOpts): Promise<string> {
     const child = spawn("docker", [
       "run", "-d",
       "--name",  opts.name,
-      "-v",      `${opts.workspacePath}:${CONTAINER_WORKSPACE}`,
+      "-v",      `${toDockerPath(opts.workspacePath)}:${CONTAINER_WORKSPACE}`,
       "-p",      `${opts.hostPort}:${opts.containerPort}`,
       ...labelArgs,
       opts.image,
