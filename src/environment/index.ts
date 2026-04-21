@@ -52,6 +52,18 @@ export interface EnvironmentManager {
    * Returns undefined for local-process environments (callers use spawnServer directly).
    */
   getSpawnServerFn(env: Environment): ServerSpawnFn | undefined;
+
+  /**
+   * Live inspection of the environment and its backing container.
+   * Does not mutate state. Used by the `env` CLI command for status tables.
+   */
+  inspect?(env: Environment): Promise<import("./docker-manager.js").EnvironmentInspectResult>;
+
+  /**
+   * Returns all persisted environments for a given run by scanning candidate directories.
+   * Used by the `env` CLI command to show all containers for a run.
+   */
+  listForRun?(runId: string): Promise<Environment[]>;
 }
 
 // ─── Configs ──────────────────────────────────────────────────────────────────

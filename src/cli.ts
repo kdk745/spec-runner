@@ -41,10 +41,12 @@ Usage:
   node dist/cli.js run      "<prompt>"   — lock a spec only (no execution)
   node dist/cli.js exec     <runId>      — re-run pipeline against an existing locked spec
   node dist/cli.js show     <runId>      — inspect run, spec, candidates, and result
+  node dist/cli.js env      <runId>      — show Docker container status for all candidates in a run
 
 Environment:
   ANTHROPIC_API_KEY   required for "pipeline", "run", and "exec" with the claude adapter
   RUNS_DIR            override artifact storage path (default: ./runs)
+  DOCKER_ENV=1        enable Docker-backed compute environments (one container per candidate)
 `.trim());
 }
 
@@ -475,6 +477,47 @@ async function patchRunRecord(
   }
 }
 
+async function cmdEnvStatus(runId: string): Promise<void> {
+  const mgr = createDockerEnvironmentManager(RUNS_DIR);
+  const envs = await mgr.listForRun(runId);
+
+  if (envs.length === 0) {
+    console.error(`No Docker environments found for run ${runId}.`);
+    console.error("Run with DOCKER_ENV=1 to use Docker-backed compute environments.");
+    process.exit(1);
+  }
+
+  const rows = await Promise.all(
+    envs.map(async (env) => {
+      const info = await mgr.inspect(env);
+      return {
+        env:       info.environmentId.slice(0, 8),
+        candidate: info.candidateId.slice(0, 8),
+        status:    info.status,
+        container: info.containerStatus,
+        running:   info.running ? "yes" : "no",
+        port:      info.hostPort ?? "-",
+        uptime:    info.uptimeSec !== undefined ? `${info.uptimeSec}s` : "-",
+      };
+    })
+  );
+
+  const header = ["ENV", "CANDIDATE", "STATUS", "CONTAINER", "RUNNING", "PORT", "UPTIME"];
+  const cols   = rows.map((r) => Object.values(r).map(String));
+  const widths = header.map((h, i) =>
+    Math.max(h.length, ...cols.map((c) => (c[i] ?? "").length))
+  );
+
+  const fmt = (cells: string[]) =>
+    cells.map((c, i) => c.padEnd(widths[i] ?? 0)).join("  ");
+
+  console.error(`\nDocker environments for run ${runId.slice(0, 8)}:\n`);
+  console.error(fmt(header));
+  console.error(widths.map((w) => "-".repeat(w)).join("  "));
+  for (const row of cols) console.error(fmt(row));
+  console.error();
+}
+
 async function cmdShow(runId: string): Promise<void> {
   const runDir = join(RUNS_DIR, runId);
 
@@ -548,6 +591,17 @@ async function main(): Promise<void> {
       process.exit(1);
     }
     await cmdShow(runId);
+    return;
+  }
+
+  if (command === "env") {
+    const runId = args[0]?.trim();
+    if (!runId) {
+      console.error("Error: runId is required.\n");
+      usage();
+      process.exit(1);
+    }
+    await cmdEnvStatus(runId);
     return;
   }
 
