@@ -347,6 +347,28 @@ One repair cycle maximum (`MAX_REPAIR_ATTEMPTS = 1`). The escalation artifact is
 
 ---
 
+## Candidate runtime contract
+
+Every candidate runs in exactly one of two modes. No heuristic start-command scraping — the resolver inspects the workspace in strict order (`src/runtime/runtime-resolver.ts`):
+
+| Mode | Trigger | How it starts |
+|------|---------|---------------|
+| `static` | `index.html` at workspace root (and no `package.json` with a `start` script) | `npx serve . -l tcp://0.0.0.0:3000` — `serve` is pre-installed in the image |
+| `node`   | `package.json` with a non-empty `scripts.start` | `npm install` → `npm start`, with `HOST=0.0.0.0 PORT=3000` injected by the container spawn |
+
+A candidate may also emit `candidate-runtime.json` to be explicit:
+
+```json
+{ "mode": "static" }
+{ "mode": "node", "start": "node dist/server.js" }
+```
+
+**Binding rules.** All servers MUST bind to `0.0.0.0:3000` inside the container. Docker maps container:3000 → a random host port; the recorder and self-verifier poll that host port. A server that binds `127.0.0.1` is unreachable from the recorder and will fail with a diagnostic that includes `/tmp/server.log`, listening sockets, and an in-container `curl` probe.
+
+**Agent prompt.** `src/worker/claude-adapter.ts` instructs agents to pick one mode and — for node — read `process.env.PORT` / `process.env.HOST`. Hard-coding `127.0.0.1` is called out as a failure mode.
+
+---
+
 ## Recording as proof of work
 
 "Build succeeded" is a weak signal. A build can succeed while producing a server that returns 500 on every request. The recording stage runs a scripted 7-step CRUD narrative against the live server and captures every HTTP exchange:

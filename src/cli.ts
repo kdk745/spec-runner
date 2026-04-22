@@ -29,7 +29,7 @@ import { createRecorder } from "./recorder/index.js";
 import { createEvaluator } from "./evaluator/index.js";
 import { createClaudeUXEvaluator, createBuilderDebater } from "./ux-evaluator/index.js";
 import { createStubSubmitter, createWebhookSubmitter } from "./submitter/index.js";
-import { createDockerEnvironmentManager } from "./environment/docker-manager.js";
+import { createDockerEnvironmentManager, sweepOrphanContainers } from "./environment/docker-manager.js";
 import type { RunRecord, RunSpec, PipelineResult } from "./types/index.js";
 
 const RUNS_DIR = resolve(process.env["RUNS_DIR"] ?? "./runs");
@@ -87,7 +87,7 @@ async function cmdRun(prompt: string): Promise<void> {
 
 // ─── Shared orchestrator factory ─────────────────────────────────────────────
 
-function buildOrchestrator(adapterName: string) {
+async function buildOrchestrator(adapterName: string) {
   const apiKey = process.env["ANTHROPIC_API_KEY"];
 
   const workers = createWorkerRegistry();
@@ -108,7 +108,11 @@ function buildOrchestrator(adapterName: string) {
     ? createDockerEnvironmentManager(RUNS_DIR)
     : undefined;
 
-  if (environmentManager) console.error("Docker environment enabled (DOCKER_ENV=1).");
+  if (environmentManager) {
+    console.error("Docker environment enabled (DOCKER_ENV=1).");
+    const swept = await sweepOrphanContainers();
+    if (swept > 0) console.error(`Swept ${swept} orphan spec-runner container(s) from prior runs.`);
+  }
 
   const uxEvaluator  = apiKey ? createClaudeUXEvaluator(apiKey, "correctness") : undefined;
   const uxEvaluatorB = apiKey ? createClaudeUXEvaluator(apiKey, "quality")     : undefined;
@@ -345,6 +349,11 @@ async function cmdPipeline(prompt: string): Promise<void> {
     ? createDockerEnvironmentManager(RUNS_DIR)
     : undefined;
 
+  if (environmentManager) {
+    const swept = await sweepOrphanContainers();
+    if (swept > 0) console.error(`Swept ${swept} orphan spec-runner container(s) from prior runs.`);
+  }
+
   const orchestrator = createOrchestrator({
     runsDir: RUNS_DIR,
     events,
@@ -449,7 +458,7 @@ async function cmdExec(runId: string): Promise<void> {
 
   await patchRunRecord(runDir, "building");
 
-  const orchestrator = buildOrchestrator(spec.workerConfig.adapterName);
+  const orchestrator = await buildOrchestrator(spec.workerConfig.adapterName);
 
   console.error(`Executing pipeline for run ${runId} (adapter: ${spec.workerConfig.adapterName})...`);
   const result = await orchestrator.rerun(runId);

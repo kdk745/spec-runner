@@ -29,11 +29,11 @@ import type {
   ServerSpawnFn,
 } from "../types/index.js";
 import {
-  resolveStartCommand,
   spawnServer,
   waitForPort,
   extractPortFromText,
 } from "../recorder/server.js";
+import { resolveRuntime, summarizeRuntime, captureServerDiagnostics } from "../runtime/runtime-resolver.js";
 import { createRecorder } from "../recorder/index.js";
 import { log } from "../logger.js";
 
@@ -91,9 +91,9 @@ export async function selfVerify(
 
   // ── Server start ──────────────────────────────────────────────────────────
 
-  const startCmd = await resolveStartCommand(workspace.rootPath);
-  if (!startCmd) {
-    log("self-verify", `[${spec.id.slice(0, 8)}] No runnable entry point — self-verification skipped`);
+  const runtime = await resolveRuntime(workspace.rootPath);
+  log("self-verify", `[${spec.id.slice(0, 8)}] Runtime: ${summarizeRuntime(runtime)}`);
+  if (!runtime) {
     return persist(candidateDir, {
       runId: spec.id,
       passed: false,
@@ -104,13 +104,17 @@ export async function selfVerify(
   }
 
   const spawnFn = opts?.spawnServerFn ?? spawnServer;
-  const serverHandle = spawnFn(startCmd, workspace.rootPath);
+  const serverHandle = spawnFn(runtime.startCmd, workspace.rootPath);
   const preferPort = opts?.overridePort
     ?? extractPortFromText(spec.successCriteria.map((c) => c.description).join(" "));
   const portResult = await waitForPort(SERVER_WAIT_MS, preferPort);
 
   if (!portResult) {
     log("self-verify", `[${spec.id.slice(0, 8)}] Server did not respond within ${SERVER_WAIT_MS / 1000}s`);
+    if (opts?.execFn) {
+      const diag = await captureServerDiagnostics(opts.execFn);
+      log("self-verify", `[${spec.id.slice(0, 8)}] diagnostics:\n${diag}`);
+    }
     serverHandle.kill();
     return persist(candidateDir, {
       runId: spec.id,

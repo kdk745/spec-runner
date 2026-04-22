@@ -8,3 +8,4 @@ conversation-history.md
 graphify-out/
 src/graphify-out/
 .claude/settings.local.json
+test-results/

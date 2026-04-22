@@ -1,10 +1,8 @@
 /**
- * Server lifecycle helpers for the recorder.
+ * Server lifecycle helpers for the recorder and self-verifier.
  *
- * resolveStartCommand — inspects the workspace to find the best start command:
- *   1. Parse README.md for a ```bash block containing node/npm start
- *   2. Check common entry-point files in order
- *   3. Return null if nothing runnable is found
+ * Runtime resolution has moved to src/runtime/runtime-resolver.ts — this file
+ * only handles workspace prep, server spawning, port polling, and freeing.
  *
  * spawnServer — spawns the command, collects startup output, returns a handle
  *   with a kill() method. Caller is responsible for calling kill() when done.
@@ -15,7 +13,6 @@
 
 import { spawn, type ChildProcess } from "node:child_process";
 import { existsSync } from "node:fs";
-import { readFile } from "node:fs/promises";
 import { join } from "node:path";
 import http from "node:http";
 
@@ -77,88 +74,9 @@ function runToCompletion(
   });
 }
 
-// ─── Command resolution ───────────────────────────────────────────────────────
+// ─── Port cleanup ─────────────────────────────────────────────────────────────
 
 const CANDIDATE_PORTS = [3000, 8080, 3001, 8000, 4000];
-
-const ENTRY_POINT_COMMANDS: Array<{ file: string; cmd: string }> = [
-  { file: "server.js",       cmd: "node server.js" },
-  { file: "app.js",          cmd: "node app.js" },
-  { file: "index.js",        cmd: "node index.js" },
-  { file: "src/server.js",   cmd: "node src/server.js" },
-  { file: "src/index.js",    cmd: "node src/index.js" },
-  { file: "dist/server.js",  cmd: "node dist/server.js" },
-  { file: "dist/index.js",   cmd: "node dist/index.js" },
-  { file: "dist/app.js",     cmd: "node dist/app.js" },
-];
-
-export async function resolveStartCommand(workspaceRoot: string, port = 3000): Promise<string | null> {
-  // 1. Try README.md code blocks
-  const readme = await extractReadmeCommand(workspaceRoot);
-  if (readme) return readme;
-
-  // 2. Try common entry points by file existence
-  for (const { file, cmd } of ENTRY_POINT_COMMANDS) {
-    if (existsSync(join(workspaceRoot, file))) return cmd;
-  }
-
-  // 3. package.json with a start script
-  const pkgPath = join(workspaceRoot, "package.json");
-  if (existsSync(pkgPath)) {
-    try {
-      const pkg = JSON.parse(await readFile(pkgPath, "utf8")) as {
-        scripts?: Record<string, string>;
-      };
-      if (pkg.scripts?.start) return "npm start";
-    } catch {
-      // ignore malformed package.json
-    }
-  }
-
-  // 4. Bare index.html with no package.json — serve as a static site.
-  // Use an inline Node.js static server: Node is always available, starts instantly,
-  // works cross-platform (no python, no npx download required).
-  if (existsSync(join(workspaceRoot, "index.html"))) {
-    return (
-      `node -e "const h=require('http'),fs=require('fs'),p=require('path');` +
-      `h.createServer((q,s)=>{` +
-        `let f=p.join('.',q.url==='/'?'index.html':q.url.split('?')[0]);` +
-        `fs.readFile(f,(e,d)=>{` +
-          `if(e){s.writeHead(404);s.end('not found')}` +
-          `else{const m={html:'text/html',css:'text/css',js:'text/javascript',svg:'image/svg+xml',png:'image/png'};` +
-          `const ext=p.extname(f).slice(1);` +
-          `s.writeHead(200,{'Content-Type':m[ext]||'text/plain'});s.end(d)}` +
-        `})` +
-      `}).listen(${port})"`
-    );
-  }
-
-  return null;
-}
-
-async function extractReadmeCommand(workspaceRoot: string): Promise<string | null> {
-  const readmePath = join(workspaceRoot, "README.md");
-  if (!existsSync(readmePath)) return null;
-
-  try {
-    const content = await readFile(readmePath, "utf8");
-    const blockRe = /```(?:bash|sh)?\n([\s\S]*?)```/g;
-    let m: RegExpExecArray | null;
-    while ((m = blockRe.exec(content)) !== null) {
-      const lines = m[1]!.split("\n").map((l) => l.trim()).filter(Boolean);
-      for (const line of lines) {
-        if (/^(node|npm\s+start|node\s+dist|node\s+src)\s/.test(line)) {
-          return line;
-        }
-      }
-    }
-  } catch {
-    // ignore
-  }
-  return null;
-}
-
-// ─── Port cleanup ─────────────────────────────────────────────────────────────
 
 /**
  * Kill any process currently listening on the given port so that our server

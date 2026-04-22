@@ -22,12 +22,12 @@ import { join, dirname } from "node:path";
 import type { Recorder, DemoScript, DemoScriptStep, RecordOptions } from "./index.js";
 import {
   prepareWorkspace,
-  resolveStartCommand,
   spawnServer,
   waitForPort,
   extractPortFromText,
   freePort,
 } from "./server.js";
+import { resolveRuntime, summarizeRuntime, captureServerDiagnostics } from "../runtime/runtime-resolver.js";
 import { log } from "../logger.js";
 import type {
   RunSpec,
@@ -168,36 +168,40 @@ export class DefaultRecorder implements Recorder {
       log("record", prepLog.split("\n").map(l => `  ${l}`).join("\n"));
     }
 
-    // ── Find + start server ──────────────────────────────────────────────────
-    const serverListenPort = opts?.spawnServerFn ? 3000 : (opts?.overridePort ?? 3000);
-    const startCmd = await resolveStartCommand(workspace.rootPath, serverListenPort);
-    const shellStep = logStep(stepIndex++, "Start app server", startCmd ?? "(no runnable entry point)");
+    // ── Resolve runtime + start server ───────────────────────────────────────
+    const runtime = await resolveRuntime(workspace.rootPath);
+    log("record", `Runtime: ${summarizeRuntime(runtime)}`);
+    const shellStep = logStep(stepIndex++, "Start app server", runtime?.startCmd ?? "(no runnable entry point)");
 
-    if (!startCmd) {
-      log("record", "No runnable entry point found — skipping server start");
+    if (!runtime) {
       shellStep.exitCode = 1;
-      shellStep.stderr = "No runnable entry point found in workspace.";
+      shellStep.stderr = "No runnable entry point: workspace has no candidate-runtime.json, no package.json start, and no index.html.";
       shellStep.durationMs = 0;
       demoLog.push(shellStep);
       return this._finish(spec, recordingDir, demoLog, screenshotPaths, videoPath, traceSteps, resolvedBaseUrl);
     }
 
-    log("record", `Starting server${opts?.spawnServerFn ? " (docker exec)" : ""}: ${startCmd}`);
+    log("record", `Starting server${opts?.spawnServerFn ? " (docker exec)" : ""}: ${runtime.startCmd}`);
     const preferPort = opts?.overridePort
       ?? extractPortFromText(spec.successCriteria.map((c) => c.description).join(" "));
     // Kill any leftover process on this port from a previous run so waitForPort()
     // doesn't latch onto a stale server serving a different workspace.
     if (preferPort) await freePort(preferPort);
     const spawnFn = opts?.spawnServerFn ?? spawnServer;
-    const serverHandle = spawnFn(startCmd, workspace.rootPath);
+    const serverHandle = spawnFn(runtime.startCmd, workspace.rootPath);
     const started = Date.now();
     const portResult = await waitForPort(SERVER_WAIT_MS, preferPort);
     shellStep.durationMs = Date.now() - started;
 
     if (!portResult) {
-      log("record", `Server did not respond within ${SERVER_WAIT_MS / 1000}s`);
+      log("record", `Server did not respond within ${SERVER_WAIT_MS / 1000}s (${runtime.mode}/${runtime.source})`);
+      let diag = "";
+      if (opts?.execFn) {
+        diag = await captureServerDiagnostics(opts.execFn);
+        log("record", `Diagnostics:\n${diag}`);
+      }
       shellStep.exitCode = 1;
-      shellStep.stderr = `Server did not respond on any port within ${SERVER_WAIT_MS}ms.`;
+      shellStep.stderr = `Server did not respond on any port within ${SERVER_WAIT_MS}ms.\nRuntime: ${summarizeRuntime(runtime)}\n${diag}`;
       shellStep.stdout = serverHandle.startupLog.slice(0, 500);
       demoLog.push(shellStep);
       serverHandle.kill();

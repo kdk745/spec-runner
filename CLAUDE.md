@@ -60,6 +60,8 @@ src/
     index.ts                   — EnvironmentManager interface + DEFAULT_ENVIRONMENT_CONFIG
   workspace/                   — filesystem workspace allocation
   candidate/                   — candidate record persistence (fs-manager)
+  runtime/
+    runtime-resolver.ts        — candidate-runtime contract (static|node), diagnostics
   worker/
     adapter.ts                 — WorkerAdapter interface + registry
     stub-adapter.ts            — no-op stub (always succeeds, no files)
@@ -76,6 +78,27 @@ src/
 - **`NUM_CANDIDATES = 3`** in `pipeline.ts` — change here only.
 - **Evaluator is deterministic** — no LLM calls, all scoring from structured artifacts.
 - **`environmentManager` is optional** in `CandidateRunnerDeps` — when absent the flow is identical to V1. Wire it when adding Docker/VM backends.
+
+### Runtime contract (how candidate apps get started)
+
+Resolution order in `src/runtime/runtime-resolver.ts`:
+1. `candidate-runtime.json` (authoritative) — `{ "mode": "static" | "node", "start"?: "..." }`
+2. Auto-node: `package.json` with non-empty `scripts.start` → `npm start`
+3. Auto-static: bare `index.html` → `npx serve . -l tcp://0.0.0.0:3000`
+4. Otherwise null — nothing runnable
+
+No README-bash scraping, no entry-file guessing (removed — too flaky). Container port is always 3000; Docker maps it to a random host port. `createDockerSpawnServerFn` injects `HOST=0.0.0.0 PORT=3000` so node apps bind to all interfaces. Agents must read `process.env.PORT`/`process.env.HOST` — hard-coding `127.0.0.1` is unreachable from the recorder.
+
+When a server fails to respond, `captureServerDiagnostics(execFn)` runs a single exec that dumps `/tmp/server.log`, listening sockets (`ss`/`netstat`), process list, and an in-container `curl http://localhost:3000/`.
+
+### Docker container hygiene
+
+- `docker run --init` — tini reaps backgrounded child processes on stop. Without this, `containerd-shim` lingers after `docker rm -f`.
+- `DockerEnvironmentManager.release()` uses `docker rm -f` only (atomic kill+remove). No separate `docker stop`.
+- `sweepOrphanContainers()` runs at pipeline start — removes any container with label `spec-runner=1` left from prior runs.
+- Labels applied at `docker run`: `spec-runner=1`, `spec-runner.run-id`, `spec-runner.candidate-id`, `spec-runner.env-id`.
+- **Windows/WSL2 caveat:** `containerd-shim` occasionally persists after `rm -f` even with `--init`; the daemon can eventually crash after ~3–5 pipeline runs. Symptoms: `npipe:////./pipe/dockerDesktopLinuxEngine` unreachable. Recovery: quit-and-relaunch Docker Desktop. Linux hosts don't exhibit this.
+- **Do not `wsl --shutdown` while spec-runner containers are live** — it orphans shims without giving the daemon a chance to reap. Always `docker rm -f` first (or let the pipeline run to completion).
 
 ---
 

@@ -62,17 +62,28 @@ Rules:
 - For React/Vite projects: do NOT set outDir/rootDir in tsconfig; use the default Vite tsconfig
 - For React/Vite projects: always write src/App.tsx as the root component imported by src/main.tsx
 
-Recording compatibility — your app will be started and recorded by a headless browser:
-- After build, a recorder starts your app and opens http://localhost:3000/ in a real browser
-- The recorder resolves your start command in this order:
-  1. A \`\`\`bash block in README.md containing a line starting with \`node\` or \`npm start\`
-  2. Presence of server.js / app.js / index.js / dist/index.js at the workspace root
-  3. A \`start\` script in package.json (runs \`npm start\`)
-  4. Presence of index.html only — served by a built-in static file server (last resort)
-- Always include a package.json with a \`start\` script so the recorder can reliably launch your app
-- For frontend-only apps (HTML/CSS/JS, no backend): use \`"start": "npx serve . -l 3000"\`
-- Your server MUST listen on port 3000 — that is the URL the browser will open
-- The main UI must be fully rendered at http://localhost:3000/ with no fatal JS errors`;
+Runtime contract — the platform starts your app in one of two modes only:
+
+  static: a single-page app with an index.html at the workspace root.
+          The platform serves it with \`npx serve . -l tcp://0.0.0.0:3000\`.
+          You do NOT write a server. No package.json start script needed.
+
+  node:   a Node.js server. Requires package.json with a \`"start"\` script.
+          The platform runs \`npm install\` then \`npm start\` and injects
+          HOST=0.0.0.0 and PORT=3000. Your server MUST:
+            • read process.env.PORT (default 3000) and process.env.HOST (default 0.0.0.0)
+            • bind to HOST:PORT (e.g. \`app.listen(PORT, HOST)\`)
+            • NEVER hard-code 127.0.0.1 — it will not be reachable from the recorder.
+
+Rules:
+- Pick exactly one mode. Do not ship both an index.html AND a conflicting package.json start.
+- Static mode is correct for frontend-only prototypes (HTML/CSS/JS, local storage).
+- Node mode is correct when you need a real backend (REST API, SSR, etc.).
+- Optionally write \`candidate-runtime.json\` to declare mode explicitly:
+    {"mode":"static"}                           — override auto-detect
+    {"mode":"node","start":"node dist/index.js"} — override npm start
+- The recorder opens http://localhost:3000/ in a real browser. The main UI
+  must render fully at that URL with no fatal JS errors.`;
 
 export class ClaudeWorkerAdapter implements WorkerAdapter {
   readonly name = "claude";
@@ -488,9 +499,9 @@ Rules:
 - Paths must be relative (no leading slash, no ..)
 - Include ALL files needed to run the app
 - Include a README.md with a single run command
-- Always include a package.json with a \`start\` script — the recorder uses this to launch your app
-- For frontend-only apps (HTML/CSS/JS, no backend): set \`"start": "npx serve . -l 3000"\` in package.json
-- Your app must serve on port 3000 so the headless browser can open http://localhost:3000/`;
+- Follow the runtime contract above: pick EITHER static (bare index.html, no start script needed) OR node (package.json with a start script that binds HOST:PORT from env)
+- Node-mode servers MUST read process.env.PORT and process.env.HOST and bind to them — never hard-code 127.0.0.1
+- The recorder opens http://localhost:3000/ in a real browser`;
 
 function buildUserPromptCli(spec: RunSpec): string {
   const lines: string[] = [SYSTEM_PROMPT, CLI_SYSTEM_SUFFIX, "", buildUserPrompt(spec)];

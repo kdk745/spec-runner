@@ -165,8 +165,9 @@ export class DockerEnvironmentManager implements EnvironmentManager {
     await this._save(teardown);
 
     try {
-      await dockerStop(env.containerId);
-      envLog(env.id, "teardown", `container=${env.containerId.slice(0, 12)} → stopped`);
+      // Single atomic force-remove: kill + remove in one call. Separate stop+rm
+      // can race when --init isn't present and leave orphan shims. With --init,
+      // rm -f cleanly tears down the whole process tree.
       await dockerRemove(env.containerId);
       envLog(env.id, "teardown", `container=${env.containerId.slice(0, 12)} → removed`);
     } catch (err) {
@@ -318,6 +319,10 @@ function dockerRun(opts: DockerRunOpts): Promise<string> {
   return new Promise((resolve, reject) => {
     const child = spawn("docker", [
       "run", "-d",
+      // --init runs tini as PID 1 so backgrounded servers (npx serve, node, etc.)
+      // are reaped cleanly on docker stop. Without this, containerd-shim hangs
+      // waiting for orphaned children and leaves zombie shims after removal.
+      "--init",
       "--name",  opts.name,
       "-v",      `${toDockerPath(opts.workspacePath)}:${CONTAINER_WORKSPACE}`,
       "-v",      `${claudeHome}:/root/.claude:ro`,
@@ -383,11 +388,14 @@ function dockerInspectContainer(
 // ─── ExecFn — routes commands into the container via docker exec ──────────────
 
 export function createDockerExecFn(containerId: string): ExecFn {
-  return (command: string, cwd = CONTAINER_WORKSPACE, timeoutMs = 60_000, stdin?: string) =>
+  return (command: string, cwd, timeoutMs = 60_000, stdin?: string) =>
     new Promise((resolve) => {
+      // Normalise cwd: treat undefined / empty string / relative as the container
+      // workspace. `docker exec -w ""` errors with "Cwd must be an absolute path".
+      const resolvedCwd = cwd && cwd.startsWith("/") ? cwd : CONTAINER_WORKSPACE;
       // -i keeps stdin open so we can pipe content directly into the container,
       // eliminating any need to write files to the bind-mounted workspace from the host.
-      const args = ["exec", "-i", "-w", cwd, containerId, "sh", "-c", command];
+      const args = ["exec", "-i", "-w", resolvedCwd, containerId, "sh", "-c", command];
       const child = spawn("docker", args);
 
       if (stdin !== undefined) {
@@ -424,7 +432,12 @@ export function createDockerSpawnServerFn(containerId: string, hostPort: number)
     let startupLog = "";
     let serverPid  = "";
 
-    const bgCmd = `cd ${CONTAINER_WORKSPACE} && (${command}) > /tmp/server.log 2>&1 & echo $! > /tmp/server.pid && echo $!`;
+    // Inject HOST=0.0.0.0 PORT=3000 so node apps that honour env vars bind
+    // to all interfaces inside the container. Docker forwards hostPort → 3000.
+    const bgCmd =
+      `cd ${CONTAINER_WORKSPACE} && ` +
+      `HOST=0.0.0.0 PORT=3000 ${command} > /tmp/server.log 2>&1 & ` +
+      `echo $! > /tmp/server.pid && echo $!`;
     const starter = spawn("docker", ["exec", containerId, "sh", "-c", bgCmd]);
     starter.stdout?.on("data", (d: Buffer) => { serverPid += d.toString().trim(); });
     starter.stderr?.on("data", (d: Buffer) => { startupLog += d.toString(); });
@@ -462,4 +475,25 @@ function findFreePort(): Promise<number> {
 
 export function createDockerEnvironmentManager(runsDir: string): DockerEnvironmentManager {
   return new DockerEnvironmentManager(runsDir);
+}
+
+/**
+ * Remove any spec-runner containers lingering from prior runs. Called at
+ * pipeline start to guarantee we never inherit half-dead state. Matches on
+ * the `spec-runner=1` label applied by dockerRun(). Non-fatal on error.
+ */
+export function sweepOrphanContainers(): Promise<number> {
+  return new Promise((resolve) => {
+    const list = spawn("docker", ["ps", "-a", "-q", "--filter", "label=spec-runner=1"]);
+    let ids = "";
+    list.stdout?.on("data", (d: Buffer) => { ids += d.toString(); });
+    list.on("error", () => resolve(0));
+    list.on("close", () => {
+      const containerIds = ids.split(/\s+/).filter(Boolean);
+      if (containerIds.length === 0) { resolve(0); return; }
+      const rm = spawn("docker", ["rm", "-f", ...containerIds]);
+      rm.on("error",  () => resolve(containerIds.length));
+      rm.on("close",  () => resolve(containerIds.length));
+    });
+  });
 }
