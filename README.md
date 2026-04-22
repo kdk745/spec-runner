@@ -1,5 +1,6 @@
 [### Demo
 ](https://vimeo.com/1185409191?share=copy&fl=sv&fe=ci)
+
 # spec-runner
 
 A pipeline that takes a natural-language prompt, locks it into a structured spec, runs three independent Claude agents against it in parallel, records each agent's working implementation, evaluates and debates the results across two independent reviewers, and delivers a structured submission for human review.
