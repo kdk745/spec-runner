@@ -1,0 +1,612 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Patient Intake Form</title>
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+
+        body {
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            min-height: 100vh;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            padding: 20px;
+        }
+
+        .container {
+            background: white;
+            border-radius: 10px;
+            box-shadow: 0 10px 40px rgba(0, 0, 0, 0.2);
+            max-width: 600px;
+            width: 100%;
+            padding: 40px;
+        }
+
+        h1 {
+            color: #333;
+            margin-bottom: 10px;
+            font-size: 28px;
+        }
+
+        .subtitle {
+            color: #666;
+            margin-bottom: 30px;
+            font-size: 14px;
+        }
+
+        .form-section {
+            margin-bottom: 30px;
+        }
+
+        .section-title {
+            color: #667eea;
+            font-size: 16px;
+            font-weight: 600;
+            margin-bottom: 15px;
+            padding-bottom: 10px;
+            border-bottom: 2px solid #667eea;
+        }
+
+        .form-group {
+            margin-bottom: 20px;
+        }
+
+        label {
+            display: block;
+            color: #333;
+            font-weight: 500;
+            margin-bottom: 8px;
+            font-size: 14px;
+        }
+
+        input[type="text"],
+        input[type="email"],
+        input[type="tel"],
+        input[type="date"],
+        textarea,
+        select {
+            width: 100%;
+            padding: 12px;
+            border: 2px solid #e0e0e0;
+            border-radius: 5px;
+            font-size: 14px;
+            font-family: inherit;
+            transition: border-color 0.3s;
+        }
+
+        input[type="text"]:focus,
+        input[type="email"]:focus,
+        input[type="tel"]:focus,
+        input[type="date"]:focus,
+        textarea:focus,
+        select:focus {
+            outline: none;
+            border-color: #667eea;
+            box-shadow: 0 0 0 3px rgba(102, 126, 234, 0.1);
+        }
+
+        textarea {
+            resize: vertical;
+            min-height: 100px;
+        }
+
+        .checkbox-group,
+        .radio-group {
+            display: flex;
+            flex-direction: column;
+            gap: 10px;
+        }
+
+        .checkbox-item,
+        .radio-item {
+            display: flex;
+            align-items: center;
+            gap: 8px;
+        }
+
+        input[type="checkbox"],
+        input[type="radio"] {
+            width: 18px;
+            height: 18px;
+            cursor: pointer;
+            accent-color: #667eea;
+        }
+
+        .checkbox-item label,
+        .radio-item label {
+            margin: 0;
+            cursor: pointer;
+            font-weight: normal;
+        }
+
+        .button-group {
+            display: flex;
+            gap: 10px;
+            justify-content: space-between;
+            margin-top: 30px;
+        }
+
+        button {
+            padding: 12px 24px;
+            font-size: 14px;
+            font-weight: 600;
+            border: none;
+            border-radius: 5px;
+            cursor: pointer;
+            transition: all 0.3s;
+        }
+
+        .btn-submit {
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            color: white;
+            flex: 1;
+        }
+
+        .btn-submit:hover {
+            transform: translateY(-2px);
+            box-shadow: 0 5px 20px rgba(102, 126, 234, 0.4);
+        }
+
+        .btn-reset {
+            background: #f0f0f0;
+            color: #333;
+            flex: 1;
+        }
+
+        .btn-reset:hover {
+            background: #e0e0e0;
+        }
+
+        .alert {
+            padding: 12px 16px;
+            border-radius: 5px;
+            margin-bottom: 20px;
+            font-size: 14px;
+            display: none;
+        }
+
+        .alert.success {
+            background: #d4edda;
+            color: #155724;
+            border: 1px solid #c3e6cb;
+            display: block;
+        }
+
+        .alert.info {
+            background: #d1ecf1;
+            color: #0c5460;
+            border: 1px solid #bee5eb;
+            display: block;
+        }
+
+        .required {
+            color: #e74c3c;
+        }
+
+        .form-row {
+            display: grid;
+            grid-template-columns: 1fr 1fr;
+            gap: 20px;
+        }
+
+        @media (max-width: 600px) {
+            .container {
+                padding: 20px;
+            }
+
+            h1 {
+                font-size: 24px;
+            }
+
+            .form-row {
+                grid-template-columns: 1fr;
+            }
+
+            .button-group {
+                flex-direction: column;
+            }
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <h1>Patient Intake Form</h1>
+        <p class="subtitle">Please complete all required fields</p>
+
+        <div id="alert" class="alert"></div>
+
+        <form id="patientForm">
+            <!-- Personal Information -->
+            <div class="form-section">
+                <div class="section-title">Personal Information</div>
+
+                <div class="form-row">
+                    <div class="form-group">
+                        <label for="firstName">First Name <span class="required">*</span></label>
+                        <input type="text" id="firstName" name="firstName" required>
+                    </div>
+                    <div class="form-group">
+                        <label for="lastName">Last Name <span class="required">*</span></label>
+                        <input type="text" id="lastName" name="lastName" required>
+                    </div>
+                </div>
+
+                <div class="form-row">
+                    <div class="form-group">
+                        <label for="dateOfBirth">Date of Birth <span class="required">*</span></label>
+                        <input type="date" id="dateOfBirth" name="dateOfBirth" required>
+                    </div>
+                    <div class="form-group">
+                        <label for="gender">Gender <span class="required">*</span></label>
+                        <select id="gender" name="gender" required>
+                            <option value="">-- Select Gender --</option>
+                            <option value="male">Male</option>
+                            <option value="female">Female</option>
+                            <option value="other">Other</option>
+                            <option value="prefer-not-to-say">Prefer not to say</option>
+                        </select>
+                    </div>
+                </div>
+
+                <div class="form-group">
+                    <label for="email">Email Address <span class="required">*</span></label>
+                    <input type="email" id="email" name="email" required>
+                </div>
+
+                <div class="form-group">
+                    <label for="phone">Phone Number <span class="required">*</span></label>
+                    <input type="tel" id="phone" name="phone" required>
+                </div>
+            </div>
+
+            <!-- Contact Information -->
+            <div class="form-section">
+                <div class="section-title">Contact & Address</div>
+
+                <div class="form-group">
+                    <label for="address">Street Address <span class="required">*</span></label>
+                    <input type="text" id="address" name="address" required>
+                </div>
+
+                <div class="form-row">
+                    <div class="form-group">
+                        <label for="city">City <span class="required">*</span></label>
+                        <input type="text" id="city" name="city" required>
+                    </div>
+                    <div class="form-group">
+                        <label for="state">State/Province <span class="required">*</span></label>
+                        <input type="text" id="state" name="state" required>
+                    </div>
+                </div>
+
+                <div class="form-row">
+                    <div class="form-group">
+                        <label for="zipcode">Zip/Postal Code <span class="required">*</span></label>
+                        <input type="text" id="zipcode" name="zipcode" required>
+                    </div>
+                    <div class="form-group">
+                        <label for="country">Country <span class="required">*</span></label>
+                        <input type="text" id="country" name="country" required>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Medical History -->
+            <div class="form-section">
+                <div class="section-title">Medical History</div>
+
+                <div class="form-group">
+                    <label>Do you have any chronic conditions? <span class="required">*</span></label>
+                    <div class="radio-group">
+                        <div class="radio-item">
+                            <input type="radio" id="chronicYes" name="chronicConditions" value="yes" required>
+                            <label for="chronicYes">Yes</label>
+                        </div>
+                        <div class="radio-item">
+                            <input type="radio" id="chronicNo" name="chronicConditions" value="no" required>
+                            <label for="chronicNo">No</label>
+                        </div>
+                    </div>
+                </div>
+
+                <div class="form-group">
+                    <label for="chronicDetails">If yes, please list them:</label>
+                    <textarea id="chronicDetails" name="chronicDetails" placeholder="Enter any chronic conditions..."></textarea>
+                </div>
+
+                <div class="form-group">
+                    <label>Current Medications <span class="required">*</span></label>
+                    <div class="radio-group">
+                        <div class="radio-item">
+                            <input type="radio" id="medicationsYes" name="takingMedications" value="yes" required>
+                            <label for="medicationsYes">Yes</label>
+                        </div>
+                        <div class="radio-item">
+                            <input type="radio" id="medicationsNo" name="takingMedications" value="no" required>
+                            <label for="medicationsNo">No</label>
+                        </div>
+                    </div>
+                </div>
+
+                <div class="form-group">
+                    <label for="medicationList">If yes, please list medications:</label>
+                    <textarea id="medicationList" name="medicationList" placeholder="Enter current medications with dosages..."></textarea>
+                </div>
+
+                <div class="form-group">
+                    <label>Any Allergies? <span class="required">*</span></label>
+                    <div class="radio-group">
+                        <div class="radio-item">
+                            <input type="radio" id="allergiesYes" name="hasAllergies" value="yes" required>
+                            <label for="allergiesYes">Yes</label>
+                        </div>
+                        <div class="radio-item">
+                            <input type="radio" id="allergiesNo" name="hasAllergies" value="no" required>
+                            <label for="allergiesNo">No</label>
+                        </div>
+                    </div>
+                </div>
+
+                <div class="form-group">
+                    <label for="allergyDetails">If yes, please describe:</label>
+                    <textarea id="allergyDetails" name="allergyDetails" placeholder="Describe allergies and reactions..."></textarea>
+                </div>
+            </div>
+
+            <!-- Health & Lifestyle -->
+            <div class="form-section">
+                <div class="section-title">Health & Lifestyle</div>
+
+                <div class="form-group">
+                    <label>Do you smoke? <span class="required">*</span></label>
+                    <div class="radio-group">
+                        <div class="radio-item">
+                            <input type="radio" id="smokeYes" name="smoking" value="yes" required>
+                            <label for="smokeYes">Yes</label>
+                        </div>
+                        <div class="radio-item">
+                            <input type="radio" id="smokeNo" name="smoking" value="no" required>
+                            <label for="smokeNo">No</label>
+                        </div>
+                    </div>
+                </div>
+
+                <div class="form-group">
+                    <label>Do you drink alcohol? <span class="required">*</span></label>
+                    <div class="radio-group">
+                        <div class="radio-item">
+                            <input type="radio" id="drinkYes" name="alcohol" value="yes" required>
+                            <label for="drinkYes">Yes</label>
+                        </div>
+                        <div class="radio-item">
+                            <input type="radio" id="drinkNo" name="alcohol" value="no" required>
+                            <label for="drinkNo">No</label>
+                        </div>
+                    </div>
+                </div>
+
+                <div class="form-group">
+                    <label>Exercise frequency <span class="required">*</span></label>
+                    <select id="exerciseFrequency" name="exerciseFrequency" required>
+                        <option value="">-- Select frequency --</option>
+                        <option value="never">Never</option>
+                        <option value="rarely">Rarely (1-2 times/month)</option>
+                        <option value="sometimes">Sometimes (1-2 times/week)</option>
+                        <option value="regularly">Regularly (3-5 times/week)</option>
+                        <option value="daily">Daily</option>
+                    </select>
+                </div>
+            </div>
+
+            <!-- Reason for Visit -->
+            <div class="form-section">
+                <div class="section-title">Reason for Visit</div>
+
+                <div class="form-group">
+                    <label for="visitReason">Primary Reason for Visit <span class="required">*</span></label>
+                    <textarea id="visitReason" name="visitReason" placeholder="Describe your reason for visiting..." required></textarea>
+                </div>
+
+                <div class="form-group">
+                    <label for="additionalNotes">Additional Notes</label>
+                    <textarea id="additionalNotes" name="additionalNotes" placeholder="Any additional information you'd like to share..."></textarea>
+                </div>
+            </div>
+
+            <!-- Consent -->
+            <div class="form-section">
+                <div class="section-title">Consent & Agreement</div>
+
+                <div class="form-group">
+                    <div class="checkbox-item">
+                        <input type="checkbox" id="consents" name="consents" required>
+                        <label for="consents">I consent to share my medical information with healthcare providers <span class="required">*</span></label>
+                    </div>
+                </div>
+
+                <div class="form-group">
+                    <div class="checkbox-item">
+                        <input type="checkbox" id="accurateInfo" name="accurateInfo" required>
+                        <label for="accurateInfo">I confirm that the information provided is accurate and complete <span class="required">*</span></label>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Buttons -->
+            <div class="button-group">
+                <button type="reset" class="btn-reset">Clear Form</button>
+                <button type="submit" class="btn-submit">Submit Form</button>
+            </div>
+        </form>
+    </div>
+
+    <script>
+        const STORAGE_KEY = 'patientIntakeForm';
+        const AUTOSAVE_DELAY = 1000; // 1 second debounce
+
+        let autosaveTimer = null;
+        const form = document.getElementById('patientForm');
+        const alertBox = document.getElementById('alert');
+
+        // Initialize form on page load
+        document.addEventListener('DOMContentLoaded', () => {
+            restoreFormData();
+            setupFormListeners();
+            showAutoSaveAlert();
+        });
+
+        // Setup event listeners for all form elements
+        function setupFormListeners() {
+            const formElements = form.querySelectorAll('input, textarea, select');
+            
+            formElements.forEach(element => {
+                element.addEventListener('input', debounceAutoSave);
+                element.addEventListener('change', debounceAutoSave);
+            });
+
+            form.addEventListener('reset', () => {
+                clearFormData();
+                showAlert('Form cleared', 'success');
+            });
+
+            form.addEventListener('submit', handleFormSubmit);
+        }
+
+        // Debounce autosave
+        function debounceAutoSave() {
+            clearTimeout(autosaveTimer);
+            autosaveTimer = setTimeout(() => {
+                saveFormData();
+            }, AUTOSAVE_DELAY);
+        }
+
+        // Save form data to localStorage
+        function saveFormData() {
+            const formData = new FormData(form);
+            const data = {};
+
+            // Handle all input types
+            formData.forEach((value, key) => {
+                if (data[key]) {
+                    // Handle multiple values (checkboxes)
+                    if (Array.isArray(data[key])) {
+                        data[key].push(value);
+                    } else {
+                        data[key] = [data[key], value];
+                    }
+                } else {
+                    data[key] = value;
+                }
+            });
+
+            // Also capture checked state of checkboxes and radios
+            const checkboxes = form.querySelectorAll('input[type="checkbox"]');
+            const radios = form.querySelectorAll('input[type="radio"]');
+
+            checkboxes.forEach(checkbox => {
+                data[checkbox.name] = checkbox.checked;
+            });
+
+            radios.forEach(radio => {
+                if (radio.checked) {
+                    data[radio.name] = radio.value;
+                }
+            });
+
+            localStorage.setItem(STORAGE_KEY, JSON.stringify(data));
+        }
+
+        // Restore form data from localStorage
+        function restoreFormData() {
+            const savedData = localStorage.getItem(STORAGE_KEY);
+            
+            if (!savedData) {
+                return;
+            }
+
+            try {
+                const data = JSON.parse(savedData);
+
+                // Restore all form fields
+                for (const [key, value] of Object.entries(data)) {
+                    const element = form.elements[key];
+                    
+                    if (!element) continue;
+
+                    if (element.type === 'checkbox') {
+                        element.checked = value === true || value === 'true';
+                    } else if (element.type === 'radio') {
+                        const radio = form.querySelector(`input[name="${key}"][value="${value}"]`);
+                        if (radio) {
+                            radio.checked = true;
+                        }
+                    } else if (element.type === 'text' || element.type === 'email' || element.type === 'tel' || element.type === 'date') {
+                        element.value = value || '';
+                    } else if (element.tagName === 'TEXTAREA' || element.tagName === 'SELECT') {
+                        element.value = value || '';
+                    }
+                }
+            } catch (error) {
+                console.error('Error restoring form data:', error);
+            }
+        }
+
+        // Clear form data from localStorage
+        function clearFormData() {
+            localStorage.removeItem(STORAGE_KEY);
+            form.reset();
+        }
+
+        // Handle form submission
+        function handleFormSubmit(e) {
+            e.preventDefault();
+
+            if (!form.checkValidity()) {
+                showAlert('Please fill in all required fields', 'info');
+                return;
+            }
+
+            // Save final data
+            saveFormData();
+
+            // Show success message
+            showAlert('Form submitted successfully! Your data has been saved.', 'success');
+
+            // Optionally reset after submission
+            setTimeout(() => {
+                // Keep data saved but reset form to show fresh state
+                form.reset();
+                restoreFormData();
+            }, 1500);
+        }
+
+        // Show auto-save info alert on first visit
+        function showAutoSaveAlert() {
+            const hasVisited = localStorage.getItem(STORAGE_KEY);
+            if (hasVisited) {
+                showAlert('Your previous form data has been restored', 'info');
+            }
+        }
+
+        // Show alert message
+        function showAlert(message, type) {
+            alertBox.textContent = message;
+            alertBox.className = `alert ${type}`;
+            
+            if (type === 'success') {
+                setTimeout(() => {
+                    alertBox.className = 'alert';
+                }, 4000);
+            }
+        }
+    </script>
+</body>
+</html>

@@ -1,0 +1,70 @@
+{
+  "runId": "894fe271-3f25-45f1-a468-53e567a17eb7",
+  "videoPath": "C:\\Users\\kayne\\code\\spec-runner\\runs\\894fe271-3f25-45f1-a468-53e567a17eb7\\candidates\\88280560-6357-4cce-ad0b-7d22907a8d9a\\recording\\demo.webm",
+  "screenshotPaths": [
+    "C:\\Users\\kayne\\code\\spec-runner\\runs\\894fe271-3f25-45f1-a468-53e567a17eb7\\candidates\\88280560-6357-4cce-ad0b-7d22907a8d9a\\recording\\screenshots\\step-01-initial.png",
+    "C:\\Users\\kayne\\code\\spec-runner\\runs\\894fe271-3f25-45f1-a468-53e567a17eb7\\candidates\\88280560-6357-4cce-ad0b-7d22907a8d9a\\recording\\screenshots\\step-02-type-1.png",
+    "C:\\Users\\kayne\\code\\spec-runner\\runs\\894fe271-3f25-45f1-a468-53e567a17eb7\\candidates\\88280560-6357-4cce-ad0b-7d22907a8d9a\\recording\\screenshots\\step-03-type-2.png",
+    "C:\\Users\\kayne\\code\\spec-runner\\runs\\894fe271-3f25-45f1-a468-53e567a17eb7\\candidates\\88280560-6357-4cce-ad0b-7d22907a8d9a\\recording\\screenshots\\step-04-type-3.png"
+  ],
+  "demoLog": [
+    {
+      "stepIndex": 0,
+      "description": "Start app server",
+      "command": "npx serve . -l tcp://0.0.0.0:3000",
+      "stdout": "Server ready at http://localhost:3000/",
+      "stderr": "",
+      "exitCode": 0,
+      "durationMs": 3
+    },
+    {
+      "stepIndex": 1,
+      "description": "Navigate to http://localhost:3000/",
+      "command": "http://localhost:3000/",
+      "stdout": "Loaded: http://localhost:3000/",
+      "stderr": "",
+      "exitCode": 0,
+      "durationMs": 317
+    },
+    {
+      "stepIndex": 2,
+      "description": "Initial page state",
+      "command": "step-01-initial.png",
+      "stdout": "",
+      "stderr": "",
+      "exitCode": 0,
+      "durationMs": 427
+    },
+    {
+      "stepIndex": 3,
+      "description": "Type short input (abc)",
+      "command": "abc",
+      "stdout": "Typed \"abc\", screenshot: step-02-type-1.png",
+      "stderr": "",
+      "exitCode": 0,
+      "durationMs": 982
+    },
+    {
+      "stepIndex": 4,
+      "description": "Type medium input (Password1)",
+      "command": "Password1",
+      "stdout": "Typed \"Password1\", screenshot: step-03-type-2.png",
+      "stderr": "",
+      "exitCode": 0,
+      "durationMs": 978
+    },
+    {
+      "stepIndex": 5,
+      "description": "Type strong input (P@ssw0rd1!)",
+      "command": "P@ssw0rd1!",
+      "stdout": "Typed \"P@ssw0rd1!\", screenshot: step-04-type-3.png",
+      "stderr": "",
+      "exitCode": 0,
+      "durationMs": 960
+    }
+  ],
+  "manifestPath": "C:\\Users\\kayne\\code\\spec-runner\\runs\\894fe271-3f25-45f1-a468-53e567a17eb7\\candidates\\88280560-6357-4cce-ad0b-7d22907a8d9a\\recording\\recording-manifest.json",
+  "tracePath": "C:\\Users\\kayne\\code\\spec-runner\\runs\\894fe271-3f25-45f1-a468-53e567a17eb7\\candidates\\88280560-6357-4cce-ad0b-7d22907a8d9a\\recording\\api-trace.json",
+  "frameIndexPath": "C:\\Users\\kayne\\code\\spec-runner\\runs\\894fe271-3f25-45f1-a468-53e567a17eb7\\candidates\\88280560-6357-4cce-ad0b-7d22907a8d9a\\recording\\frame-index.json",
+  "completedAt": "2026-04-22T05:52:23.905Z"
+}

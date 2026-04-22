@@ -21,7 +21,7 @@ This document is written for engineers evaluating the design. It covers the deci
 cp .env.example .env          # add your ANTHROPIC_API_KEY
 npm install && npm run compile
 npx playwright install chromium
-npm run arena -- "Build a minimal Express REST API for a todo list in TypeScript"
+npm run arena -- "Build an Express REST API in TypeScript for a support-ticket tracker with CRUD, ?status= and ?priority= filtering, and a PATCH /tickets/:id/status endpoint that enforces valid status transitions"
 ```
 
 Artifacts land in `./runs/<runId>/`. The completion banner on stderr lists every path.
@@ -47,6 +47,8 @@ Artifacts land in `./runs/<runId>/`. The completion banner on stderr lists every
 ---
 
 ## Pipeline overview
+
+npm run arena -- "Build a frontend-only single-page patient intake form prototype with local storage persistence"
 
 ```
 Prompt
@@ -507,7 +509,7 @@ cp .env.example .env               # add ANTHROPIC_API_KEY
 
 ```bash
 npm run compile
-npm run arena -- "Build a minimal Express REST API for a todo list in TypeScript"
+npm run arena -- "Build an Express REST API in TypeScript for a support-ticket tracker with CRUD, ?status= and ?priority= filtering, and a PATCH /tickets/:id/status endpoint that enforces valid status transitions"
 ```
 
 Or directly:

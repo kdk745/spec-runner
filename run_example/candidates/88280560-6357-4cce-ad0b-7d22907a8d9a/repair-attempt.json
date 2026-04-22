@@ -1,0 +1,37 @@
+{
+  "attempt": 1,
+  "build": {
+    "success": true,
+    "artifacts": [
+      {
+        "path": "index.html",
+        "kind": "file",
+        "sizeBytes": 21887
+      },
+      {
+        "path": "README.md",
+        "kind": "file",
+        "sizeBytes": 3178
+      },
+      {
+        "path": "build-manifest.json",
+        "kind": "file",
+        "sizeBytes": 376
+      }
+    ],
+    "durationMs": 65683,
+    "tokenUsage": {
+      "inputTokens": 16472,
+      "outputTokens": 6852,
+      "totalTokens": 23324
+    }
+  },
+  "selfVerification": {
+    "runId": "894fe271-3f25-45f1-a468-53e567a17eb7",
+    "passed": false,
+    "serverStarted": true,
+    "checks": [],
+    "completedAt": "2026-04-22T05:52:19.914Z"
+  },
+  "completedAt": "2026-04-22T05:52:19.915Z"
+}

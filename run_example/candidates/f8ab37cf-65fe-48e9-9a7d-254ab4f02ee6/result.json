@@ -1,0 +1,26 @@
+{
+  "success": true,
+  "artifacts": [
+    {
+      "path": "index.html",
+      "kind": "file",
+      "sizeBytes": 13888
+    },
+    {
+      "path": "README.md",
+      "kind": "file",
+      "sizeBytes": 1484
+    },
+    {
+      "path": "build-manifest.json",
+      "kind": "file",
+      "sizeBytes": 376
+    }
+  ],
+  "durationMs": 23914,
+  "tokenUsage": {
+    "inputTokens": 11975,
+    "outputTokens": 4316,
+    "totalTokens": 16291
+  }
+}

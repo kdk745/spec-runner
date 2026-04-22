@@ -1,0 +1,549 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Patient Intake Form</title>
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Oxygen, Ubuntu, Cantarell, sans-serif;
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            min-height: 100vh;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            padding: 20px;
+        }
+
+        .container {
+            background: white;
+            border-radius: 8px;
+            box-shadow: 0 10px 40px rgba(0, 0, 0, 0.2);
+            width: 100%;
+            max-width: 600px;
+            padding: 40px;
+        }
+
+        h1 {
+            color: #333;
+            margin-bottom: 10px;
+            font-size: 28px;
+        }
+
+        .form-subtitle {
+            color: #666;
+            margin-bottom: 30px;
+            font-size: 14px;
+        }
+
+        .form-group {
+            margin-bottom: 24px;
+        }
+
+        .form-row {
+            display: grid;
+            grid-template-columns: 1fr 1fr;
+            gap: 20px;
+        }
+
+        .form-row.full {
+            grid-template-columns: 1fr;
+        }
+
+        label {
+            display: block;
+            margin-bottom: 8px;
+            color: #333;
+            font-weight: 500;
+            font-size: 14px;
+        }
+
+        input[type="text"],
+        input[type="email"],
+        input[type="tel"],
+        input[type="date"],
+        input[type="number"],
+        select,
+        textarea {
+            width: 100%;
+            padding: 10px 12px;
+            border: 1px solid #ddd;
+            border-radius: 4px;
+            font-size: 14px;
+            font-family: inherit;
+            transition: border-color 0.2s;
+        }
+
+        input[type="text"]:focus,
+        input[type="email"]:focus,
+        input[type="tel"]:focus,
+        input[type="date"]:focus,
+        input[type="number"]:focus,
+        select:focus,
+        textarea:focus {
+            outline: none;
+            border-color: #667eea;
+            box-shadow: 0 0 0 3px rgba(102, 126, 234, 0.1);
+        }
+
+        textarea {
+            resize: vertical;
+            min-height: 100px;
+        }
+
+        .checkbox-group,
+        .radio-group {
+            display: flex;
+            flex-direction: column;
+            gap: 10px;
+        }
+
+        .checkbox-item,
+        .radio-item {
+            display: flex;
+            align-items: center;
+            gap: 10px;
+        }
+
+        input[type="checkbox"],
+        input[type="radio"] {
+            cursor: pointer;
+            width: 18px;
+            height: 18px;
+            margin-top: 2px;
+        }
+
+        .checkbox-item label,
+        .radio-item label {
+            margin: 0;
+            cursor: pointer;
+            font-weight: 400;
+        }
+
+        .section-title {
+            color: #667eea;
+            font-size: 16px;
+            font-weight: 600;
+            margin-top: 30px;
+            margin-bottom: 20px;
+            padding-bottom: 10px;
+            border-bottom: 2px solid #f0f0f0;
+        }
+
+        .button-group {
+            display: flex;
+            gap: 12px;
+            margin-top: 40px;
+        }
+
+        button {
+            flex: 1;
+            padding: 12px 24px;
+            font-size: 16px;
+            font-weight: 600;
+            border: none;
+            border-radius: 4px;
+            cursor: pointer;
+            transition: all 0.2s;
+        }
+
+        .btn-submit {
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            color: white;
+        }
+
+        .btn-submit:hover {
+            transform: translateY(-2px);
+            box-shadow: 0 5px 20px rgba(102, 126, 234, 0.4);
+        }
+
+        .btn-submit:active {
+            transform: translateY(0);
+        }
+
+        .btn-clear {
+            background: #f0f0f0;
+            color: #333;
+        }
+
+        .btn-clear:hover {
+            background: #e0e0e0;
+        }
+
+        .success-message {
+            display: none;
+            background: #d4edda;
+            color: #155724;
+            padding: 16px;
+            border-radius: 4px;
+            margin-bottom: 20px;
+            border: 1px solid #c3e6cb;
+            font-size: 14px;
+        }
+
+        .success-message.show {
+            display: block;
+            animation: slideIn 0.3s ease-out;
+        }
+
+        @keyframes slideIn {
+            from {
+                opacity: 0;
+                transform: translateY(-10px);
+            }
+            to {
+                opacity: 1;
+                transform: translateY(0);
+            }
+        }
+
+        .status-indicator {
+            font-size: 12px;
+            color: #999;
+            margin-top: 20px;
+            text-align: center;
+            padding-top: 20px;
+            border-top: 1px solid #f0f0f0;
+        }
+
+        .status-indicator.saved {
+            color: #28a745;
+        }
+
+        @media (max-width: 600px) {
+            .container {
+                padding: 24px;
+            }
+
+            h1 {
+                font-size: 24px;
+            }
+
+            .form-row {
+                grid-template-columns: 1fr;
+            }
+
+            .button-group {
+                flex-direction: column;
+            }
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <h1>Patient Intake Form</h1>
+        <p class="form-subtitle">Please complete all required fields</p>
+
+        <div id="successMessage" class="success-message">
+            ✓ Form data saved successfully
+        </div>
+
+        <form id="intakeForm">
+            <!-- Personal Information Section -->
+            <div class="section-title">Personal Information</div>
+
+            <div class="form-row">
+                <div class="form-group">
+                    <label for="firstName">First Name *</label>
+                    <input type="text" id="firstName" name="firstName" required>
+                </div>
+                <div class="form-group">
+                    <label for="lastName">Last Name *</label>
+                    <input type="text" id="lastName" name="lastName" required>
+                </div>
+            </div>
+
+            <div class="form-row">
+                <div class="form-group">
+                    <label for="dateOfBirth">Date of Birth *</label>
+                    <input type="date" id="dateOfBirth" name="dateOfBirth" required>
+                </div>
+                <div class="form-group">
+                    <label for="gender">Gender *</label>
+                    <select id="gender" name="gender" required>
+                        <option value="">Select...</option>
+                        <option value="male">Male</option>
+                        <option value="female">Female</option>
+                        <option value="other">Other</option>
+                        <option value="prefer-not-to-say">Prefer not to say</option>
+                    </select>
+                </div>
+            </div>
+
+            <div class="form-row">
+                <div class="form-group">
+                    <label for="email">Email Address *</label>
+                    <input type="email" id="email" name="email" required>
+                </div>
+                <div class="form-group">
+                    <label for="phone">Phone Number *</label>
+                    <input type="tel" id="phone" name="phone" required>
+                </div>
+            </div>
+
+            <!-- Medical History Section -->
+            <div class="section-title">Medical History</div>
+
+            <div class="form-group form-row full">
+                <label>Known Allergies</label>
+                <div class="checkbox-group">
+                    <div class="checkbox-item">
+                        <input type="checkbox" id="allergyPenicillin" name="allergies" value="penicillin">
+                        <label for="allergyPenicillin">Penicillin</label>
+                    </div>
+                    <div class="checkbox-item">
+                        <input type="checkbox" id="allergyAspirin" name="allergies" value="aspirin">
+                        <label for="allergyAspirin">Aspirin</label>
+                    </div>
+                    <div class="checkbox-item">
+                        <input type="checkbox" id="allergyPollen" name="allergies" value="pollen">
+                        <label for="allergyPollen">Pollen</label>
+                    </div>
+                    <div class="checkbox-item">
+                        <input type="checkbox" id="allergyOther" name="allergies" value="other">
+                        <label for="allergyOther">Other</label>
+                    </div>
+                </div>
+            </div>
+
+            <div class="form-group form-row full">
+                <label for="otherAllergies">Please specify other allergies (if applicable)</label>
+                <textarea id="otherAllergies" name="otherAllergies" placeholder="Describe any other allergies..."></textarea>
+            </div>
+
+            <div class="form-group form-row full">
+                <label>Current Medications</label>
+                <textarea id="medications" name="medications" placeholder="List all current medications..." required></textarea>
+            </div>
+
+            <!-- Lifestyle Section -->
+            <div class="section-title">Lifestyle Information</div>
+
+            <div class="form-group form-row full">
+                <label>Do you smoke? *</label>
+                <div class="radio-group">
+                    <div class="radio-item">
+                        <input type="radio" id="smokeYes" name="smoking" value="yes" required>
+                        <label for="smokeYes">Yes</label>
+                    </div>
+                    <div class="radio-item">
+                        <input type="radio" id="smokeNo" name="smoking" value="no" required>
+                        <label for="smokeNo">No</label>
+                    </div>
+                    <div class="radio-item">
+                        <input type="radio" id="smokeFormer" name="smoking" value="former" required>
+                        <label for="smokeFormer">Former smoker</label>
+                    </div>
+                </div>
+            </div>
+
+            <div class="form-row">
+                <div class="form-group">
+                    <label for="height">Height (cm) *</label>
+                    <input type="number" id="height" name="height" min="0" required>
+                </div>
+                <div class="form-group">
+                    <label for="weight">Weight (kg) *</label>
+                    <input type="number" id="weight" name="weight" min="0" required>
+                </div>
+            </div>
+
+            <!-- Additional Notes Section -->
+            <div class="section-title">Additional Information</div>
+
+            <div class="form-group form-row full">
+                <label for="additionalNotes">Additional Notes or Concerns</label>
+                <textarea id="additionalNotes" name="additionalNotes" placeholder="Any additional information you'd like to share..."></textarea>
+            </div>
+
+            <!-- Buttons -->
+            <div class="button-group">
+                <button type="submit" class="btn-submit">Save Form</button>
+                <button type="reset" class="btn-clear">Clear Form</button>
+            </div>
+        </form>
+
+        <div class="status-indicator" id="statusIndicator">
+            Form data not saved yet
+        </div>
+    </div>
+
+    <script>
+        const form = document.getElementById('intakeForm');
+        const successMessage = document.getElementById('successMessage');
+        const statusIndicator = document.getElementById('statusIndicator');
+        const STORAGE_KEY = 'patientIntakeFormData';
+
+        // Load form data from localStorage on page load
+        function loadFormData() {
+            const savedData = localStorage.getItem(STORAGE_KEY);
+            if (savedData) {
+                try {
+                    const formData = JSON.parse(savedData);
+                    restoreFormData(formData);
+                    updateStatusIndicator(true);
+                } catch (error) {
+                    console.error('Error loading form data:', error);
+                }
+            }
+        }
+
+        // Restore form data to inputs
+        function restoreFormData(formData) {
+            // Restore text inputs and selects
+            Object.keys(formData).forEach(key => {
+                const field = form.elements[key];
+                if (!field) return;
+
+                if (field.type === 'checkbox' || field.type === 'radio') {
+                    // Handle checkboxes and radio buttons
+                    const fields = form.querySelectorAll(`[name="${key}"]`);
+                    fields.forEach(field => {
+                        if (Array.isArray(formData[key])) {
+                            field.checked = formData[key].includes(field.value);
+                        } else {
+                            field.checked = field.value === formData[key];
+                        }
+                    });
+                } else if (field.length) {
+                    // Handle select/multiple elements
+                    field.forEach(element => {
+                        if (Array.isArray(formData[key])) {
+                            element.selected = formData[key].includes(element.value);
+                        } else {
+                            element.selected = element.value === formData[key];
+                        }
+                    });
+                } else {
+                    // Handle text inputs, textareas, date inputs, etc.
+                    field.value = formData[key] || '';
+                }
+            });
+        }
+
+        // Get form data as object
+        function getFormData() {
+            const formData = {};
+            const elements = form.elements;
+
+            for (let i = 0; i < elements.length; i++) {
+                const field = elements[i];
+                
+                if (!field.name || field.type === 'submit' || field.type === 'reset') {
+                    continue;
+                }
+
+                if (field.type === 'checkbox') {
+                    if (!formData[field.name]) {
+                        formData[field.name] = [];
+                    }
+                    if (field.checked) {
+                        formData[field.name].push(field.value);
+                    }
+                } else if (field.type === 'radio') {
+                    if (field.checked) {
+                        formData[field.name] = field.value;
+                    }
+                } else {
+                    formData[field.name] = field.value;
+                }
+            }
+
+            return formData;
+        }
+
+        // Save form data to localStorage
+        function saveFormData() {
+            const formData = getFormData();
+            try {
+                localStorage.setItem(STORAGE_KEY, JSON.stringify(formData));
+                updateStatusIndicator(true);
+                showSuccessMessage();
+                return true;
+            } catch (error) {
+                console.error('Error saving form data:', error);
+                return false;
+            }
+        }
+
+        // Update status indicator
+        function updateStatusIndicator(saved) {
+            if (saved) {
+                const now = new Date();
+                const timeString = now.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+                statusIndicator.textContent = `✓ Form saved at ${timeString}`;
+                statusIndicator.classList.add('saved');
+            } else {
+                statusIndicator.textContent = 'Form data not saved yet';
+                statusIndicator.classList.remove('saved');
+            }
+        }
+
+        // Show success message
+        function showSuccessMessage() {
+            successMessage.classList.add('show');
+            setTimeout(() => {
+                successMessage.classList.remove('show');
+            }, 3000);
+        }
+
+        // Handle form submission
+        form.addEventListener('submit', (e) => {
+            e.preventDefault();
+            
+            // Validate form
+            if (!form.checkValidity()) {
+                alert('Please fill in all required fields correctly.');
+                return;
+            }
+
+            // Save to localStorage
+            if (saveFormData()) {
+                // Form was saved successfully
+            }
+        });
+
+        // Handle form reset
+        form.addEventListener('reset', () => {
+            setTimeout(() => {
+                updateStatusIndicator(false);
+            }, 0);
+        });
+
+        // Load data when page loads
+        window.addEventListener('DOMContentLoaded', loadFormData);
+
+        // Optional: Auto-save on input changes (every 30 seconds)
+        let autoSaveTimer;
+        form.addEventListener('input', () => {
+            clearTimeout(autoSaveTimer);
+            autoSaveTimer = setTimeout(() => {
+                const formData = getFormData();
+                try {
+                    localStorage.setItem(STORAGE_KEY, JSON.stringify(formData));
+                } catch (error) {
+                    console.error('Error auto-saving form data:', error);
+                }
+            }, 2000);
+        });
+
+        form.addEventListener('change', () => {
+            clearTimeout(autoSaveTimer);
+            autoSaveTimer = setTimeout(() => {
+                const formData = getFormData();
+                try {
+                    localStorage.setItem(STORAGE_KEY, JSON.stringify(formData));
+                } catch (error) {
+                    console.error('Error auto-saving form data:', error);
+                }
+            }, 2000);
+        });
+    </script>
+</body>
+</html>

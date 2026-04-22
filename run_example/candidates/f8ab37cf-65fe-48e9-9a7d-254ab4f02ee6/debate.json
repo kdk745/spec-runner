@@ -1,0 +1,62 @@
+{
+  "runId": "894fe271-3f25-45f1-a468-53e567a17eb7",
+  "totalScore": 63,
+  "dimensions": [
+    {
+      "name": "correctness",
+      "weight": 30,
+      "score": 0,
+      "rationale": "All criteria were skipped — no correctness evidence available."
+    },
+    {
+      "name": "runtime_stability",
+      "weight": 20,
+      "score": 100,
+      "rationale": "Server started successfully. No runtime criteria defined."
+    },
+    {
+      "name": "reproducibility",
+      "weight": 15,
+      "score": 100,
+      "rationale": "Worker produced 3 artifact(s). Execution was reproducible (server started). Demo video captured."
+    },
+    {
+      "name": "implementation_simplicity",
+      "weight": 15,
+      "score": 100,
+      "rationale": "Build manifest present. Clean output (3 files, 15 KB)."
+    },
+    {
+      "name": "demo_quality",
+      "weight": 10,
+      "score": 100,
+      "rationale": "Server started. Video recorded. 4 screenshot(s)."
+    },
+    {
+      "name": "evidence_confidence",
+      "weight": 10,
+      "score": 25,
+      "rationale": "Worker reported success but all verification checks failed — claim is unsupported. Build manifest adds output traceability."
+    }
+  ],
+  "recommendation": "needs-revision",
+  "rationale": "Score 63/100 → needs-revision. Server started. Strongest: runtime_stability (100). Weakest: correctness (0).",
+  "evidence": {
+    "criteriaTotal": 0,
+    "criteriaActive": 0,
+    "criteriaPassed": 0,
+    "runtimeCriteriaTotal": 0,
+    "runtimeCriteriaPassed": 0,
+    "staticCriteriaTotal": 0,
+    "staticCriteriaPassed": 0,
+    "serverStarted": true,
+    "videoRecorded": true,
+    "screenshotCount": 4,
+    "artifactCount": 3,
+    "totalArtifactBytes": 15748,
+    "hasBuildManifest": true,
+    "buildSuccess": true,
+    "verificationState": "failed"
+  },
+  "completedAt": "2026-04-22T05:51:16.182Z"
+}

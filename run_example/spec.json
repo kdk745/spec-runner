@@ -1,0 +1,22 @@
+{
+  "id": "894fe271-3f25-45f1-a468-53e567a17eb7",
+  "schemaVersion": "1",
+  "createdAt": "2026-04-22T05:49:25.584Z",
+  "lockedAt": "2026-04-22T05:49:35.988Z",
+  "prompt": "Build a frontend-only single-page patient intake form prototype with local storage persistence",
+  "goal": "Build a frontend-only single-page patient intake form with local storage persistence that saves and restores form data across page reloads.",
+  "constraints": [
+    "Pure frontend only — no backend, no server-side code",
+    "Single HTML file or vanilla JS/CSS/HTML stack (no build step required)",
+    "All form state must be persisted to and restored from localStorage",
+    "No external runtime dependencies (CDN links for UI libraries are acceptable)",
+    "Must run by opening index.html directly in a browser (file:// protocol)"
+  ],
+  "successCriteria": [],
+  "workerConfig": {
+    "adapterName": "claude",
+    "maxTokenBudget": 16000,
+    "timeoutMs": 300000,
+    "options": {}
+  }
+}

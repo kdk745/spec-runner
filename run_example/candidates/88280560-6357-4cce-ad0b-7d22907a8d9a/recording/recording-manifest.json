@@ -1,0 +1,50 @@
+{
+  "runId": "894fe271-3f25-45f1-a468-53e567a17eb7",
+  "scenarioTitle": "Build a frontend-only single-page patient intake form with local storage persistence that saves and restores form data across page reloads.",
+  "serverStarted": true,
+  "totalSteps": 6,
+  "stepsPassed": 6,
+  "stepsFailed": 0,
+  "totalDurationMs": 3667,
+  "videoPath": "C:\\Users\\kayne\\code\\spec-runner\\runs\\894fe271-3f25-45f1-a468-53e567a17eb7\\candidates\\88280560-6357-4cce-ad0b-7d22907a8d9a\\recording\\demo.webm",
+  "screenshotCount": 4,
+  "steps": [
+    {
+      "index": 0,
+      "description": "Start app server",
+      "passed": true,
+      "durationMs": 3
+    },
+    {
+      "index": 1,
+      "description": "Navigate to http://localhost:3000/",
+      "passed": true,
+      "durationMs": 317
+    },
+    {
+      "index": 2,
+      "description": "Initial page state",
+      "passed": true,
+      "durationMs": 427
+    },
+    {
+      "index": 3,
+      "description": "Type short input (abc)",
+      "passed": true,
+      "durationMs": 982
+    },
+    {
+      "index": 4,
+      "description": "Type medium input (Password1)",
+      "passed": true,
+      "durationMs": 978
+    },
+    {
+      "index": 5,
+      "description": "Type strong input (P@ssw0rd1!)",
+      "passed": true,
+      "durationMs": 960
+    }
+  ],
+  "completedAt": "2026-04-22T05:52:23.905Z"
+}

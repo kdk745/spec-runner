@@ -1,0 +1,40 @@
+{
+  "runId": "894fe271-3f25-45f1-a468-53e567a17eb7",
+  "videoPath": "C:\\Users\\kayne\\code\\spec-runner\\runs\\894fe271-3f25-45f1-a468-53e567a17eb7\\candidates\\273b6068-5b16-4bcc-a5b8-9f19f36e4a4b\\recording\\demo.webm",
+  "frames": [
+    {
+      "stepIndex": 1,
+      "description": "step 01 initial",
+      "endpoint": "screenshot",
+      "passed": true,
+      "screenshotPath": "C:\\Users\\kayne\\code\\spec-runner\\runs\\894fe271-3f25-45f1-a468-53e567a17eb7\\candidates\\273b6068-5b16-4bcc-a5b8-9f19f36e4a4b\\recording\\screenshots\\step-01-initial.png",
+      "isKeyFrame": true
+    },
+    {
+      "stepIndex": 2,
+      "description": "step 02 type 1",
+      "endpoint": "screenshot",
+      "passed": true,
+      "screenshotPath": "C:\\Users\\kayne\\code\\spec-runner\\runs\\894fe271-3f25-45f1-a468-53e567a17eb7\\candidates\\273b6068-5b16-4bcc-a5b8-9f19f36e4a4b\\recording\\screenshots\\step-02-type-1.png",
+      "isKeyFrame": true
+    },
+    {
+      "stepIndex": 3,
+      "description": "step 03 type 2",
+      "endpoint": "screenshot",
+      "passed": true,
+      "screenshotPath": "C:\\Users\\kayne\\code\\spec-runner\\runs\\894fe271-3f25-45f1-a468-53e567a17eb7\\candidates\\273b6068-5b16-4bcc-a5b8-9f19f36e4a4b\\recording\\screenshots\\step-03-type-2.png",
+      "isKeyFrame": true
+    },
+    {
+      "stepIndex": 4,
+      "description": "step 04 type 3",
+      "endpoint": "screenshot",
+      "passed": true,
+      "screenshotPath": "C:\\Users\\kayne\\code\\spec-runner\\runs\\894fe271-3f25-45f1-a468-53e567a17eb7\\candidates\\273b6068-5b16-4bcc-a5b8-9f19f36e4a4b\\recording\\screenshots\\step-04-type-3.png",
+      "isKeyFrame": true
+    }
+  ],
+  "keyFrameCount": 4,
+  "createdAt": "2026-04-22T05:52:21.814Z"
+}

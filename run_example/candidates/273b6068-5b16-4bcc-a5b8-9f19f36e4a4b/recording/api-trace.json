@@ -1,0 +1,14 @@
+{
+  "runId": "894fe271-3f25-45f1-a468-53e567a17eb7",
+  "scenarioTitle": "Build a frontend-only single-page patient intake form with local storage persistence that saves and restores form data across page reloads.",
+  "serverStarted": true,
+  "baseUrl": "http://localhost:3000/",
+  "steps": [],
+  "summary": {
+    "totalSteps": 0,
+    "passed": 0,
+    "failed": 0,
+    "endpointsCovered": []
+  },
+  "completedAt": "2026-04-22T05:52:21.813Z"
+}

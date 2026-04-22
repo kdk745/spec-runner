@@ -1,0 +1,7 @@
+{
+  "runId": "894fe271-3f25-45f1-a468-53e567a17eb7",
+  "candidateId": "273b6068-5b16-4bcc-a5b8-9f19f36e4a4b",
+  "reason": "Repair attempt 1/1 exhausted. 0 check(s) still failing after repair.",
+  "failedChecks": [],
+  "completedAt": "2026-04-22T05:52:17.845Z"
+}
