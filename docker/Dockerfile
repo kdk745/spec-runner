@@ -12,7 +12,10 @@
 FROM mcr.microsoft.com/playwright:v1.49.0-noble
 
 # Install TypeScript tooling that candidate build steps commonly need
-RUN npm install -g typescript@5 ts-node nodemon
+# serve        — static file server for frontend-only candidates (npx serve . -l 3000)
+# html-validate — HTML linting used in self-verification checks; installed globally
+#                 so `npx html-validate` doesn't re-download it each run
+RUN npm install -g typescript@5 ts-node nodemon serve html-validate
 
 # Install the Claude Code CLI — used by agents to generate implementations
 # Credentials are supplied at runtime via ~/.claude bind-mount (no API key needed)

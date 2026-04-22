@@ -24,6 +24,7 @@
  */
 
 import { spawn } from "node:child_process";
+import { existsSync } from "node:fs";
 import { writeFile, readFile, mkdir, readdir } from "node:fs/promises";
 import { join } from "node:path";
 import { homedir } from "node:os";
@@ -312,12 +313,15 @@ function dockerRun(opts: DockerRunOpts): Promise<string> {
   const labelArgs = Object.entries(opts.labels).flatMap(([k, v]) => ["--label", `${k}=${v}`]);
   const claudeHome = toDockerPath(join(homedir(), ".claude"));
 
+  const claudeJson = join(homedir(), ".claude.json");
+
   return new Promise((resolve, reject) => {
     const child = spawn("docker", [
       "run", "-d",
       "--name",  opts.name,
       "-v",      `${toDockerPath(opts.workspacePath)}:${CONTAINER_WORKSPACE}`,
       "-v",      `${claudeHome}:/root/.claude:ro`,
+      ...(existsSync(claudeJson) ? ["-v", `${toDockerPath(claudeJson)}:/root/.claude.json:ro`] : []),
       "-p",      `${opts.hostPort}:${opts.containerPort}`,
       ...labelArgs,
       opts.image,
@@ -379,9 +383,18 @@ function dockerInspectContainer(
 // ─── ExecFn — routes commands into the container via docker exec ──────────────
 
 export function createDockerExecFn(containerId: string): ExecFn {
-  return (command: string, cwd = CONTAINER_WORKSPACE, timeoutMs = 60_000) =>
+  return (command: string, cwd = CONTAINER_WORKSPACE, timeoutMs = 60_000, stdin?: string) =>
     new Promise((resolve) => {
-      const child = spawn("docker", ["exec", "-w", cwd, containerId, "sh", "-c", command]);
+      // -i keeps stdin open so we can pipe content directly into the container,
+      // eliminating any need to write files to the bind-mounted workspace from the host.
+      const args = ["exec", "-i", "-w", cwd, containerId, "sh", "-c", command];
+      const child = spawn("docker", args);
+
+      if (stdin !== undefined) {
+        child.stdin?.write(stdin, "utf8");
+        child.stdin?.end();
+      }
+
       let stdout = "";
       let stderr = "";
       let timedOut = false;

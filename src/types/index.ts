@@ -462,7 +462,9 @@ export type ExecFn = (
   command: string,
   /** Working directory inside the environment. Docker default: /workspace */
   cwd?: string,
-  timeoutMs?: number
+  timeoutMs?: number,
+  /** Optional stdin to pipe into the command — avoids host→container file writes */
+  stdin?: string,
 ) => Promise<{ exitCode: number; stdout: string; stderr: string; timedOut: boolean }>;
 
 /**

@@ -12,7 +12,7 @@
  * Does not update run.json — callers own run-level status transitions.
  */
 
-import { writeFile } from "node:fs/promises";
+import { writeFile, readdir } from "node:fs/promises";
 import { join } from "node:path";
 import type { RunSpec, Candidate, BuildResult, Workspace, VerificationResult, SelfVerificationResult, RepairContext, RepairAttemptResult, EscalationResult, RecordingResult, DebateResult, Environment } from "../types/index.js";
 import type { EventLog } from "../events/index.js";
@@ -163,6 +163,18 @@ export async function runCandidate(
       TIMEOUT_MS.BUILD,
     );
     log("arena", `${tag} build ${buildResult.success ? "succeeded" : "failed"} — ${buildResult.artifacts.length} artifact(s), ${buildResult.durationMs}ms`);
+    if (buildResult.error) {
+      log("arena", `${tag} build error: ${buildResult.error.slice(0, 200)}`);
+    }
+
+    // Log workspace contents for visibility
+    try {
+      const wsFiles = await readdir(workspace.rootPath);
+      const visible = wsFiles.filter(f => f !== "node_modules" && f !== "__spec-prompt__.txt");
+      log("arena", `${tag} workspace (${visible.length} file(s)): ${visible.join(", ").slice(0, 120)}`);
+    } catch {
+      log("arena", `${tag} workspace unreadable`);
+    }
 
     // 4. Persist build result
     const resultPath = join(runsDir, spec.id, "candidates", candidate.id, "result.json");
@@ -226,6 +238,7 @@ export async function runCandidate(
     const selfVerification = await withTimeout(
       "self-verify",
       selfVerify(spec, workspace, {
+        ...(execFn        ? { execFn }        : {}),
         ...(spawnServerFn ? { spawnServerFn } : {}),
         ...(currentEnv?.hostPort !== undefined ? { overridePort: currentEnv.hostPort } : {}),
       }),
@@ -273,6 +286,7 @@ export async function runCandidate(
       const repairSelfVerification = await withTimeout(
         "repair.self-verify",
         selfVerify(spec, workspace, {
+          ...(execFn        ? { execFn }        : {}),
           ...(spawnServerFn ? { spawnServerFn } : {}),
           ...(currentEnv?.hostPort !== undefined ? { overridePort: currentEnv.hostPort } : {}),
         }),

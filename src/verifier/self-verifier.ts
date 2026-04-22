@@ -64,8 +64,8 @@ export async function selfVerify(
   );
 
   if (hasShellCriteria && !hasHttpCriteria) {
-    log("self-verify", `[${spec.id.slice(0, 8)}] Detected shell-command criteria — running checks directly`);
-    return runShellCriteria(spec, workspace.rootPath, candidateDir, now);
+    log("self-verify", `[${spec.id.slice(0, 8)}] Detected shell-command criteria — running checks directly${opts?.execFn ? " (via docker exec)" : ""}`);
+    return runShellCriteria(spec, workspace.rootPath, candidateDir, now, opts?.execFn);
   }
 
   // ── REST API path: derive steps from recorder's buildScript ──────────────
@@ -225,7 +225,8 @@ async function runShellCriteria(
   spec: RunSpec,
   workspaceRoot: string,
   candidateDir: string,
-  now: () => string
+  now: () => string,
+  execFn?: ExecFn,
 ): Promise<SelfVerificationResult> {
   const checks: SelfVerificationCheck[] = [];
 
@@ -234,58 +235,46 @@ async function runShellCriteria(
     let passed = false;
     let reason = "";
 
-    if (criterion.checkKind === "static") {
-      // Static: check file existence — extract paths from backtick spans
-      const paths = [...criterion.description.matchAll(/`([^`]+)`/g)]
-        .map(m => m[1]!)
-        .filter(p => /[\w.-]+\.\w+/.test(p) && !p.includes(" ")); // looks like a file path
+    // Extract file paths from backtick spans (no spaces = looks like a file path)
+    const filePaths = [...criterion.description.matchAll(/`([^`]+)`/g)]
+      .map(m => m[1]!)
+      .filter(p => /[\w.-]+\.\w+/.test(p) && !p.includes(" "));
 
-      if (paths.length > 0) {
-        const missing = paths.filter(p => !existsSync(join(workspaceRoot, p)));
-        passed = missing.length === 0;
+    // Extract a shell command from "run `command`" pattern
+    const cmdMatch = criterion.description.match(/run\s+`([^`]+)`/i);
+    const shellCmd = cmdMatch?.[1];
+
+    if (filePaths.length > 0 && !shellCmd) {
+      // Pure file-existence check — use host existsSync (bind mount is visible on host)
+      const missing = filePaths.filter(p => !existsSync(join(workspaceRoot, p)));
+      passed = missing.length === 0;
+      reason = passed
+        ? `All file(s) present: ${filePaths.join(", ")}`
+        : `Missing file(s): ${missing.join(", ")}. Present: ${filePaths.filter(p => existsSync(join(workspaceRoot, p))).join(", ")}`;
+
+    } else if (shellCmd) {
+      // Shell command — run inside container (execFn) or on host (bash)
+      const isDevServer = /\b(vite|webpack(?:-dev-server)?|react-scripts\s+start|npm\s+run\s+dev)\b/.test(shellCmd)
+        || shellCmd.trimEnd().endsWith("&");
+
+      if (isDevServer) {
+        passed = true;
+        reason = "Dev server command skipped — recorder handles server startup";
+        log("self-verify", `  ~ [skip] ${shellCmd.slice(0, 80)} (dev server)`);
+      } else {
+        log("self-verify", `  > ${execFn ? "[container]" : "[host]"} ${shellCmd.slice(0, 80)}`);
+        const { exitCode, output } = await runCmd(shellCmd, workspaceRoot, execFn);
+        passed = exitCode === 0;
         reason = passed
-          ? `All file(s) present: ${paths.join(", ")}`
-          : `Missing file(s): ${missing.join(", ")}. Present: ${paths.filter(p => existsSync(join(workspaceRoot, p))).join(", ")}`;
-      } else {
-        passed = true;
-        reason = "No file paths to check";
+          ? `Exit 0: ${output.slice(0, 200)}`
+          : `Command exited ${exitCode}: ${shellCmd} | stdout: ${output.slice(0, 200)}`;
+        log("self-verify", `  < exit ${exitCode}${output ? " — " + output.slice(0, 60) : ""}`);
       }
-    } else {
-      // Runtime: extract "run `command`" pattern and execute it
-      const cmdMatch = criterion.description.match(/run\s+`([^`]+)`/i);
-      if (cmdMatch) {
-        const cmd = cmdMatch[1]!;
 
-        // Dev-server commands never exit — skip them here; the recorder handles
-        // server startup independently. Mark as passed so they don't block the run.
-        const isDevServer = /\b(vite|webpack(?:-dev-server)?|react-scripts\s+start|npm\s+run\s+dev)\b/.test(cmd)
-          || cmd.trimEnd().endsWith("&");
-        if (isDevServer) {
-          passed = true;
-          reason = "Dev server command skipped — recorder handles server startup";
-          log("self-verify", `  ~ [skip] ${cmd.slice(0, 80)} (dev server)`);
-        } else {
-          log("self-verify", `  > running: ${cmd}`);
-          try {
-            // Force bash so Unix-style patterns (grep -E, pipes, etc.) work on Windows
-            const result = await execAsync(cmd, { cwd: workspaceRoot, timeout: 30_000, shell: "bash" });
-            const output = (result.stdout + result.stderr).trim();
-            passed = true;
-            reason = `Exit 0: ${output.slice(0, 200)}`;
-            log("self-verify", `  < exit 0`);
-          } catch (err: unknown) {
-            const e = err as { code?: number; stdout?: string; stderr?: string; message?: string };
-            const output = ((e.stdout ?? "") + (e.stderr ?? "")).trim();
-            passed = false;
-            reason = `Command exited ${e.code ?? 1}: ${cmd} | stdout: ${output.slice(0, 200)}`;
-            log("self-verify", `  < exit ${e.code ?? 1}`);
-          }
-        }
-      } else {
-        // No extractable command — mark as skipped (not a failure)
-        passed = true;
-        reason = "No shell command to run";
-      }
+    } else {
+      // No file path and no shell command — nothing to check, mark skipped
+      passed = true;
+      reason = "No file path or shell command to check";
     }
 
     const description = criterion.description.slice(0, 120);
@@ -293,7 +282,7 @@ async function runShellCriteria(
       log("self-verify", `  ✓ [${criterion.checkKind}] ${description.slice(0, 80)}`);
     } else {
       log("self-verify", `  ✗ [${criterion.checkKind}] ${description.slice(0, 80)}`);
-      log("self-verify", `    reason: ${reason.slice(0, 120)}`);
+      log("self-verify", `    reason: ${reason.slice(0, 160)}`);
     }
 
     checks.push({
@@ -316,6 +305,26 @@ async function runShellCriteria(
     checks,
     completedAt: now(),
   });
+}
+
+// ─── Command runner — routes through execFn (Docker) or host bash ─────────────
+
+async function runCmd(
+  cmd: string,
+  cwd: string,
+  execFn?: ExecFn,
+): Promise<{ exitCode: number; output: string }> {
+  if (execFn) {
+    const r = await execFn(cmd, cwd, 60_000);
+    return { exitCode: r.exitCode, output: (r.stdout + (r.stderr ? "\n" + r.stderr : "")).trim() };
+  }
+  try {
+    const r = await execAsync(cmd, { cwd, timeout: 30_000, shell: "bash" });
+    return { exitCode: 0, output: (r.stdout + r.stderr).trim() };
+  } catch (err: unknown) {
+    const e = err as { code?: number; stdout?: string; stderr?: string };
+    return { exitCode: e.code ?? 1, output: ((e.stdout ?? "") + (e.stderr ?? "")).trim() };
+  }
 }
 
 // ─── Persistence ─────────────────────────────────────────────────────────────

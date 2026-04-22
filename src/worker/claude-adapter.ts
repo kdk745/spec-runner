@@ -19,7 +19,7 @@
  */
 
 import Anthropic from "@anthropic-ai/sdk";
-import { writeFile, mkdir, unlink } from "node:fs/promises";
+import { writeFile, mkdir } from "node:fs/promises";
 import { join, dirname } from "node:path";
 import type { WorkerAdapter, WorkerExecuteOptions } from "./adapter.js";
 import type { RunSpec, Workspace, BuildResult, Artifact, TokenUsage, RepairContext, ExecFn } from "../types/index.js";
@@ -60,7 +60,19 @@ Rules:
 - Never use ts-node in package.json scripts — always compile first with tsc, then run with node
 - tsconfig.json must include \`"outDir": "dist"\` and \`"rootDir": "src"\`
 - For React/Vite projects: do NOT set outDir/rootDir in tsconfig; use the default Vite tsconfig
-- For React/Vite projects: always write src/App.tsx as the root component imported by src/main.tsx`;
+- For React/Vite projects: always write src/App.tsx as the root component imported by src/main.tsx
+
+Recording compatibility — your app will be started and recorded by a headless browser:
+- After build, a recorder starts your app and opens http://localhost:3000/ in a real browser
+- The recorder resolves your start command in this order:
+  1. A \`\`\`bash block in README.md containing a line starting with \`node\` or \`npm start\`
+  2. Presence of server.js / app.js / index.js / dist/index.js at the workspace root
+  3. A \`start\` script in package.json (runs \`npm start\`)
+  4. Presence of index.html only — served by a built-in static file server (last resort)
+- Always include a package.json with a \`start\` script so the recorder can reliably launch your app
+- For frontend-only apps (HTML/CSS/JS, no backend): use \`"start": "npx serve . -l 3000"\`
+- Your server MUST listen on port 3000 — that is the URL the browser will open
+- The main UI must be fully rendered at http://localhost:3000/ with no fatal JS errors`;
 
 export class ClaudeWorkerAdapter implements WorkerAdapter {
   readonly name = "claude";
@@ -272,24 +284,24 @@ export class ClaudeWorkerAdapter implements WorkerAdapter {
     const phase = repairContext ? `repair attempt ${repairContext.attempt}` : "initial build";
     log("build", `Starting ${phase} via docker claude-cli`);
 
-    const promptFile = "__spec-prompt__.txt";
-    const promptPath = join(workspace.rootPath, promptFile);
     const prompt = repairContext
       ? buildRepairPromptCli(spec, repairContext)
       : buildUserPromptCli(spec);
-
-    await writeFile(promptPath, prompt, "utf8");
 
     let output = "";
     let errorMsg = "";
     try {
       const timeoutMs = spec.workerConfig.timeoutMs;
-      const result = await execFn(
-        `claude -p < /workspace/${promptFile}`,
-        "/workspace",
-        timeoutMs,
-      );
+      // Pipe prompt via stdin — no host→workspace file write, works on all platforms.
+      const result = await execFn("claude -p", "/workspace", timeoutMs, prompt);
       output = result.stdout;
+      log("build", `claude -p exit=${result.exitCode} timedOut=${result.timedOut} stdout=${output.length}b stderr=${result.stderr.length}b`);
+      if (result.stderr.trim()) {
+        log("build", `  stderr preview: ${result.stderr.slice(0, 300).replace(/\n/g, " ↵ ")}`);
+      }
+      if (output.trim()) {
+        log("build", `  stdout preview: ${output.slice(0, 300).replace(/\n/g, " ↵ ")}`);
+      }
       if (result.timedOut) {
         errorMsg = `claude -p timed out after ${timeoutMs / 1000}s`;
       } else if (result.exitCode !== 0 && !output.trim()) {
@@ -297,8 +309,6 @@ export class ClaudeWorkerAdapter implements WorkerAdapter {
       }
     } catch (err) {
       errorMsg = err instanceof Error ? err.message : String(err);
-    } finally {
-      await unlink(promptPath).catch(() => {});
     }
 
     if (errorMsg) {
@@ -477,7 +487,10 @@ Rules:
 - Use one <file> block per file
 - Paths must be relative (no leading slash, no ..)
 - Include ALL files needed to run the app
-- Include a README.md with a single run command`;
+- Include a README.md with a single run command
+- Always include a package.json with a \`start\` script — the recorder uses this to launch your app
+- For frontend-only apps (HTML/CSS/JS, no backend): set \`"start": "npx serve . -l 3000"\` in package.json
+- Your app must serve on port 3000 so the headless browser can open http://localhost:3000/`;
 
 function buildUserPromptCli(spec: RunSpec): string {
   const lines: string[] = [SYSTEM_PROMPT, CLI_SYSTEM_SUFFIX, "", buildUserPrompt(spec)];

@@ -169,7 +169,8 @@ export class DefaultRecorder implements Recorder {
     }
 
     // ── Find + start server ──────────────────────────────────────────────────
-    const startCmd = await resolveStartCommand(workspace.rootPath, opts?.overridePort ?? 3000);
+    const serverListenPort = opts?.spawnServerFn ? 3000 : (opts?.overridePort ?? 3000);
+    const startCmd = await resolveStartCommand(workspace.rootPath, serverListenPort);
     const shellStep = logStep(stepIndex++, "Start app server", startCmd ?? "(no runnable entry point)");
 
     if (!startCmd) {

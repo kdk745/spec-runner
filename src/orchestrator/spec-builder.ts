@@ -199,7 +199,14 @@ Rules:
       throw new Error("Claude did not return a tool_use block for spec parsing");
     }
 
-    return toolUse.input as ParsedSpec;
+    const input = toolUse.input as Record<string, unknown>;
+    return {
+      goal: String(input.goal ?? ""),
+      constraints: Array.isArray(input.constraints) ? (input.constraints as string[]) : [],
+      successCriteria: Array.isArray(input.successCriteria)
+        ? (input.successCriteria as ParsedSpec["successCriteria"])
+        : [],
+    };
   }
 
   private async _writeJson(dir: string, filename: string, data: unknown): Promise<void> {
