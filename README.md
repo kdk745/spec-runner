@@ -10,7 +10,8 @@ This document is written for engineers evaluating the design. It covers the deci
 
 | What | Where |
 |------|-------|
-| Full AI conversation history | [`conversation-history.md`](./conversation-history.md) |
+| Full AI conversation history (curated markdown) | [`conversation-history.md`](./conversation-history.md) |
+| Raw Claude Code transcript (JSON Lines, one object per turn) | [`conversation-history.jsonl`](./conversation-history.jsonl) |
 | 15-minute walkthrough outline | [`submission/DEMO_WALKTHROUGH.md`](./submission/DEMO_WALKTHROUGH.md) |
 | Environment variable reference | [`.env.example`](./.env.example) |
 | All design rationale and rough edges | This document (sections below) |
